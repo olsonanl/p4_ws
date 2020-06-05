@@ -1,0 +1,2 @@
+Need to set body size limit, there is a hard check in the beast code.
+It can be large; require chunked encoding on client side for larger.

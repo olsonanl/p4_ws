@@ -20,10 +20,10 @@ CXX = $(BUILD_TOOLS)/bin/g++
 
 # CXX_HANDLER_TRACKING = -DBOOST_ASIO_ENABLE_HANDLER_TRACKING
 
-BOOST = $(DEPLOY_RUNTIME)/boost-latest
+BOOST = $(DEPLOY_RUNTIME)/boost-latest-valgrind
 
 INCLUDES = -I$(BOOST)/include
-CXXFLAGS = $(INCLUDES) -g  -std=c++14 $(CXX_HANDLER_TRACKING)
+CXXFLAGS = $(INCLUDES) -g  -std=c++14 $(CXX_HANDLER_TRACKING) -DBOOST_USE_VALGRIND
 CXX_LDFLAGS = -Wl,-rpath,$(BUILD_TOOLS)/lib64 -Wl,-rpath,$(BOOST)/lib
 LDFLAGS = -L$(BOOST)/lib
 
@@ -31,6 +31,8 @@ LIBS = $(BOOST)/lib/libboost_system.a \
 	$(BOOST)/lib/libboost_filesystem.a \
 	$(BOOST)/lib/libboost_timer.a \
 	$(BOOST)/lib/libboost_chrono.a \
+	$(BOOST)/lib/libboost_coroutine.a \
+	$(BOOST)/lib/libboost_context.a \
 	$(BOOST)/lib/libboost_iostreams.a \
 	$(BOOST)/lib/libboost_regex.a \
 	$(BOOST)/lib/libboost_thread.a \
