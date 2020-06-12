@@ -5,18 +5,36 @@
  * Manage the global state required for the workspace service.
  */
 
+#include <memory>
+
+class ServiceDispatcher;
+class WorkspaceDB;
+
 class WorkspaceState : public std::enable_shared_from_this<WorkspaceState>
 {
     std::string api_root_;
+    bool quit_;
+    std::shared_ptr<ServiceDispatcher> dispatcher_;
+    std::shared_ptr<WorkspaceDB> db_;
+
 public:
-    WorkspaceState()
-	: api_root_("/api") {
+    WorkspaceState(std::shared_ptr<ServiceDispatcher> dispatcher,
+		   std::shared_ptr<WorkspaceDB> db
+	)
+	: api_root_("/api")
+	, quit_(false)
+	, dispatcher_(dispatcher)
+	, db_(db) {
     }
+    ~WorkspaceState() { std::cerr << "destroy  WorkspaceState\n"; }
 
     const std::string &api_root() { return api_root_; }
-    
+    bool quit() { return quit_; }
+    void quit(bool v) { quit_ = v; }
 
-    
+    std::shared_ptr<ServiceDispatcher> dispatcher() { return dispatcher_; }
+
+    std::shared_ptr<WorkspaceDB> db() { return db_; }
 };
 
 #endif
