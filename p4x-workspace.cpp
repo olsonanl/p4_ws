@@ -187,7 +187,14 @@ private:
 	    token_.parse(auth_hdr);
 	    if (token_.valid())
 	    {
-		if (!state_->validate_certificate(token_))
+		bool valid;
+		try {
+		    valid = state_->validate_certificate(token_);
+		} catch (std::exception e) {
+		    std::cerr << "exception validating token: " << e.what() << "\n";
+		    valid = false;
+		}
+		if (!valid)
 		{
 		    std::cerr << "Token did not verify: " << token_ << "\n";
 		    token_.invalidate();

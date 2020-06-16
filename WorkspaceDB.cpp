@@ -370,7 +370,14 @@ WSPath WorkspaceDBQuery::parse_path(const boost::json::string &pstr)
 
 WSPermission WorkspaceDBQuery::effective_permission(const WSWorkspace &w)
 {
-    std::cerr << "compute permission for user " << token().user() << "and workspace owned by " << w.owner << "\n";
+    std::cerr << "compute permission for user " << token() << " and workspace owned by " << w.owner << "\n";
+
+    if (!token().valid())
+    {
+	std::cerr << "  global fallback for invalid token\n";
+	return w.global_permission;
+    }
+
     if (w.global_permission == WSPermission::public_)
     {
 	std::cerr << "  is public\n";
@@ -393,17 +400,20 @@ WSPermission WorkspaceDBQuery::effective_permission(const WSWorkspace &w)
 	{ WSPermission::owner, 4 }
     };
 
-    auto has_perm = w.user_permission.find(token().user());
-    if (has_perm != w.user_permission.end())
+    if (token().valid())
     {
-	WSPermission user_perm = has_perm->second;
-	int rank_user = perm_ranks[user_perm];
-	int rank_global = perm_ranks[w.global_permission];
-
-	if (rank_user > rank_global)
+	auto has_perm = w.user_permission.find(token().user());
+	if (has_perm != w.user_permission.end())
 	{
-	    std::cerr << "  ranks " << rank_user << " " << rank_global << " determined " << user_perm << "\n";
-	    return user_perm;
+	    WSPermission user_perm = has_perm->second;
+	    int rank_user = perm_ranks[user_perm];
+	    int rank_global = perm_ranks[w.global_permission];
+	    
+	    if (rank_user > rank_global)
+	    {
+		std::cerr << "  ranks " << rank_user << " " << rank_global << " determined " << user_perm << "\n";
+		return user_perm;
+	    }
 	}
     }
     std::cerr << "  global fallback\n";
