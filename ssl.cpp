@@ -36,13 +36,13 @@ static void SSL_finish()
 int main(int argc, char **argv)
 {
     SSL_init();
+    SigningCerts certs;
     
     AuthToken tok;
     std::ifstream tstr("/home/olson/.patric_token");
     tstr >> tok;
-    std::cerr << "token for " << tok.user() << " expired: " << tok.is_expired() << "\n";
+    std::cerr << tok << "\n";
 
-    SigningCerts certs;
 
     std::cerr << "valid: " << certs.validate(tok) << "\n";
     

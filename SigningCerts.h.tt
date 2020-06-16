@@ -18,28 +18,28 @@ public:
 [% FOR cert IN certs -%]
 {
     const char * cert = "[% cert.text %]";
-
-    std::cerr << "load [% cert.url %]\n";
+    
+    // std::cerr << "load [% cert.url %]\n";
     BIO *b = BIO_new_mem_buf((void *) cert, strlen(cert));
     RSA *rsa = 0;
     RSA *keyx = [% cert.func %](b, &rsa, 0, 0);
-
+    
     if (keyx == 0)
     {
 	ERR_print_errors_fp(stderr);
     }
     else
     {
-    EVP_PKEY *key = EVP_PKEY_new();
-    int ok = EVP_PKEY_set1_RSA(key, rsa);
-    
-    if (!ok)
-	ERR_print_errors_fp(stderr);
-    else
-	certs_.emplace(std::make_pair("[% cert.url %]", key));
-
-    RSA_free(rsa);
-    BIO_free(b);
+	EVP_PKEY *key = EVP_PKEY_new();
+	int ok = EVP_PKEY_set1_RSA(key, rsa);
+	
+	if (!ok)
+	    ERR_print_errors_fp(stderr);
+	else
+	    certs_.emplace(std::make_pair("[% cert.url %]", key));
+	
+	RSA_free(rsa);
+	BIO_free(b);
     }
 }
 [% END -%]

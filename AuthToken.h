@@ -42,6 +42,16 @@ public:
     friend std::istream& operator>>(std::istream& is, AuthToken& tok);
 };
 
+std::ostream &operator<<(std::ostream &os, const AuthToken &tok)
+{
+    if (tok.is_expired())
+	os << "Expired";
+    os << "Token(" <<
+	tok.user() <<
+	")";
+    return os;
+}
+
 std::istream& operator>>(std::istream& is, AuthToken& tok)
 {
     std::stringstream all;
@@ -89,8 +99,6 @@ std::istream& operator>>(std::istream& is, AuthToken& tok)
 	tok.parts_.emplace(std::make_pair(k,v));
     }
     tok.text_ = std::move(all.str());
-    
-    std::cerr << "text: '" << tok.text_ << "'\n";
     return is;
 }
 
