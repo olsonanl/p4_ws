@@ -19,20 +19,6 @@
 
 #include <boost/algorithm/string.hpp>
 
-static void SSL_init()
-{
-    ERR_load_crypto_strings();
-    OpenSSL_add_all_algorithms();
-    OPENSSL_config(NULL);
-}
-
-static void SSL_finish()
-{
-    ERR_free_strings();
-    EVP_cleanup();
-    OPENSSL_no_config();    
-}
-
 int main(int argc, char **argv)
 {
     SSL_init();
