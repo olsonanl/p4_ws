@@ -72,6 +72,7 @@ private:
 	{
 	    // std::cerr << "setting  quit\n";
 	    state_->quit(true);
+	    stream_.close();
 	}
     }
 
@@ -130,7 +131,7 @@ private:
 	    std::cerr << "request: " << req << "\n";
 	    JsonRpcResponse resp;
 
-	    DispatchContext dc(yield, stream_.get_executor());
+	    DispatchContext dc(yield, stream_.get_executor(), token_);
 
 	    state_->dispatcher()->dispatch(req, resp, dc, ec);
 	    std::cerr << "dispatch returned " << ec << "\n";

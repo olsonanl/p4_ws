@@ -26,6 +26,50 @@ namespace net = boost::asio;            // from <boost/asio.hpp>
 using bsoncxx::builder::basic::kvp;
 namespace builder = bsoncxx::builder;
 
+//
+// URL decoder borrowed from Boost
+// boost_1_73_0/doc/html/boost_asio/example/cpp03/http/server4/file_handler.cpp
+//
+static bool url_decode(const std::string& in, std::string& out)
+{
+    out.clear();
+    out.reserve(in.size());
+    for (std::size_t i = 0; i < in.size(); ++i)
+    {
+	if (in[i] == '%')
+	{
+	    if (i + 3 <= in.size())
+	    {
+		int value = 0;
+		std::istringstream is(in.substr(i + 1, 2));
+		if (is >> std::hex >> value)
+		{
+		    out += static_cast<char>(value);
+		    i += 2;
+		}
+		else
+		{
+		    return false;
+		}
+	    }
+	    else
+	    {
+		return false;
+	    }
+	}
+	else if (in[i] == '+')
+	{
+	    out += ' ';
+	}
+	else
+	{
+	    out += in[i];
+	}
+    }
+    return true;
+}
+
+
 static std::string get_stringish(const bsoncxx::document::element &elt)
 {
     switch (elt.type())
@@ -67,6 +111,27 @@ static std::map<std::string, std::string> get_map(const bsoncxx::document::view 
 	    auto key = elt.key();
 	    auto kval = get_stringish(elt);
 	    map.insert(std::make_pair(key, kval));
+	}
+    }
+    return map;
+}
+
+static std::map<std::string, WSPermission> get_perm_map(const bsoncxx::document::view &doc, const std::string &key)
+{
+    std::map<std::string, WSPermission> map;
+
+    auto val = doc[key];
+
+    if (!val)
+	return map;
+
+    if (val.type() == bsoncxx::type::k_document)
+    {
+	for (auto elt: val.get_document().value)
+	{
+	    auto key = elt.key();
+	    auto kval = get_stringish(elt);
+	    map.insert(std::make_pair(key, to_permission(kval)));
 	}
     }
     return map;
@@ -132,10 +197,10 @@ WorkspaceDB::WorkspaceDB(const std::string &uri, int threads, const std::string 
  * passing the yield context. 
  */
 
-std::unique_ptr<WorkspaceDBQuery> WorkspaceDB::make_query()
+std::unique_ptr<WorkspaceDBQuery> WorkspaceDB::make_query(const AuthToken &token)
 {
     auto pe = pool_.acquire();
-    return std::make_unique<WorkspaceDBQuery>(std::move(pe), shared_from_this());
+    return std::make_unique<WorkspaceDBQuery>(token, std::move(pe), shared_from_this());
 }
 
 inline std::string to_string(boost::json::string s)
@@ -165,6 +230,7 @@ ObjectMeta WorkspaceDBQuery::lookup_object_meta(const WSPath &o)
 	meta.size = 0;
 	meta.user_metadata = o.workspace.metadata;
 	meta.global_permission = o.workspace.global_permission;
+	meta.user_permission = effective_permission(o.workspace);
     }
     else
     {
@@ -195,7 +261,7 @@ ObjectMeta WorkspaceDBQuery::lookup_object_meta(const WSPath &o)
 	meta.size = get_int64(obj, "size");
 	meta.user_metadata = get_map(obj, "metadata");
 	meta.auto_metadata = get_map(obj, "autometadata");
-	// meta.user_permission = ;
+	meta.user_permission = effective_permission(o.workspace);
 	meta.global_permission = o.workspace.global_permission;
 	if (get_int64(obj, "shock"))
 	{
@@ -246,25 +312,31 @@ WSPath WorkspaceDBQuery::parse_path(const boost::json::string &pstr)
 	qry.append(kvp("owner", path.workspace.owner));
 	qry.append(kvp("name", path.workspace.name));
     
-	std::cerr << "qry: " << bsoncxx::to_json(qry.view()) << "\n";
+ 	// std::cerr << "qry: " << bsoncxx::to_json(qry.view()) << "\n";
 
 	auto cursor = coll.find(qry.view());
-
 	auto ent = cursor.begin();
+
 	if (ent == cursor.end())
 	    return WSPath();
 
-	auto uuid = (*ent)["uuid"];
-	auto cdate = (*ent)["creation_date"];
+	auto &obj = *ent;
+
+	std::cerr << "obj: " << bsoncxx::to_json(obj) << "\n";
+
+	auto uuid = obj["uuid"];
+	auto cdate = obj["creation_date"];
+	auto perm = obj["global_permission"];
+	auto all_perms = get_perm_map(obj, "permissions");
 
 	ent++;
 	if (ent != cursor.end())
 	{
 	    std::cerr << "nonunique workspace!\n";
 	}
-	std::cerr << "uuid=" << uuid.get_utf8().value << "\n";
 
 	path.workspace.uuid = static_cast<std::string>(uuid.get_utf8().value);
+	path.workspace.global_permission = to_permission(perm.get_utf8().value[0]);
 
 	/* parse time. */
 
@@ -275,6 +347,17 @@ WSPath WorkspaceDBQuery::parse_path(const boost::json::string &pstr)
 	{
 	    std::cerr << "creation date parse failed '" << creation_time << "'\n";
 	}
+
+	for (auto p: all_perms)
+	{
+	    // Key here is the user id, url-encoded.
+	    std::string user;
+	    if (url_decode(p.first, user))
+	    {
+		path.workspace.user_permission.insert(std::make_pair(user, p.second));
+		// std::cerr << user << ": " << p.second << "\n";
+	    }
+	}
     }
     else
     {
@@ -283,4 +366,46 @@ WSPath WorkspaceDBQuery::parse_path(const boost::json::string &pstr)
     
     
     return path;
+}
+
+WSPermission WorkspaceDBQuery::effective_permission(const WSWorkspace &w)
+{
+    std::cerr << "compute permission for user " << token().user() << "and workspace owned by " << w.owner << "\n";
+    if (w.global_permission == WSPermission::public_)
+    {
+	std::cerr << "  is public\n";
+	return WSPermission::public_;
+    }
+
+    if (w.owner == token().user())
+    {
+	std::cerr << "  is owner\n";
+	return WSPermission::owner;
+    }
+
+    static std::map<WSPermission, int> perm_ranks {
+	{ WSPermission::none, 0 },
+	{ WSPermission::invalid, 0 },
+	{ WSPermission::public_, 1 },
+	{ WSPermission::read, 1 },
+	{ WSPermission::write, 2 },
+	{ WSPermission::admin, 3 },
+	{ WSPermission::owner, 4 }
+    };
+
+    auto has_perm = w.user_permission.find(token().user());
+    if (has_perm != w.user_permission.end())
+    {
+	WSPermission user_perm = has_perm->second;
+	int rank_user = perm_ranks[user_perm];
+	int rank_global = perm_ranks[w.global_permission];
+
+	if (rank_user > rank_global)
+	{
+	    std::cerr << "  ranks " << rank_user << " " << rank_global << " determined " << user_perm << "\n";
+	    return user_perm;
+	}
+    }
+    std::cerr << "  global fallback\n";
+    return w.global_permission;
 }

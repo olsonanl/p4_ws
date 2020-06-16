@@ -13,23 +13,36 @@
 #include <boost/asio/post.hpp>
 
 #include "WorkspaceService.h"
+#include "WorkspaceTypes.h"
 
 class WorkspaceDB;
 
 class WorkspaceDBQuery
 {
 private:
+    const AuthToken &token_;
     mongocxx::pool::entry  client_;
     std::shared_ptr<WorkspaceDB> db_;
 public:
-    WorkspaceDBQuery(mongocxx::pool::entry p, std::shared_ptr<WorkspaceDB> db)
-	: client_(std::move(p))
+    WorkspaceDBQuery(const AuthToken &token, mongocxx::pool::entry p, std::shared_ptr<WorkspaceDB> db)
+	: token_(token)
+	, client_(std::move(p))
 	, db_(db) {
     }
     ~WorkspaceDBQuery() { std::cerr << "destroy WorkspaceDBQuery\n"; }
     WSPath parse_path(const boost::json::string &p);
     ObjectMeta lookup_object_meta(const WSPath &path);
+    const AuthToken &token() { return token_; }
 
+    /*
+     * Utility methods.
+     */
+
+    /*
+     * Calculate effective permission for a workspace.
+     */
+    WSPermission effective_permission(const WSWorkspace &w);
+    
 };
 
 class WorkspaceDB
@@ -47,7 +60,7 @@ public:
 
     ~WorkspaceDB() { std::cerr << "destroy WorkspaceDB\n"; }
 
-    std::unique_ptr<WorkspaceDBQuery> make_query();
+    std::unique_ptr<WorkspaceDBQuery> make_query(const AuthToken &token);
 
     const std::string &db_name() { return db_name_; }
     boost::asio::thread_pool &thread_pool() { return thread_pool_; }
@@ -58,7 +71,7 @@ public:
 	boost::asio::post(thread_pool_,
 			  [&dc, qfunc, this]() {
 			      std::cerr << "in thread\n";
-			      auto q = make_query();
+			      auto q = make_query(dc.token);
 			      qfunc(std::move(q));
 			      std::cerr << "thread leaving\n";
 			      dc.timer.cancel_one();

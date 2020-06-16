@@ -10,6 +10,7 @@
 #include "WorkspaceErrors.h"
 #include "WorkspaceState.h"
 #include "DispatchContext.h"
+#include "WorkspaceTypes.h"
 
 #include "JSONRPC.h"
 
@@ -46,6 +47,18 @@ namespace boost {
 	    }
 	};
 
+	template <>
+	struct to_value_traits< WSPermission > 
+	{
+	    static void assign( value& jv, WSPermission const& t ) {
+		char c[2];
+		c[0] = static_cast<char>(t);
+		c[1] = '\0';
+		std::cerr << "serialized " << t << " to " << c << "\n";
+		jv = c;
+	    }
+	};
+
 
 
     }
@@ -57,8 +70,8 @@ class WSWorkspace
 public:
     std::string owner;
     std::string name;
-    std::string global_permission;
-    std::map<std::string, std::string> user_permission;
+    WSPermission global_permission;
+    std::map<std::string, WSPermission> user_permission;
     std::map<std::string, std::string> metadata;
     std::string uuid;
     std::tm creation_time;
@@ -87,8 +100,8 @@ public:
     size_t size;
     std::map<std::string, std::string> user_metadata;
     std::map<std::string, std::string> auto_metadata;
-    std::string user_permission;
-    std::string global_permission;
+    WSPermission user_permission;
+    WSPermission global_permission;
     std::string shockurl;
 
     ObjectMeta()
@@ -156,7 +169,23 @@ inline std::ostream &operator<<(std::ostream &os, const WSWorkspace &w)
        << w.name
        << "," << w.owner
        << "," << w.uuid
-       << "," << std::put_time(&w.creation_time, "%Y-%m-%d:%H:%M:%SZ")
+       << "," << w.global_permission
+       << ",{";
+    auto iter = w.user_permission.begin();
+    if (iter != w.user_permission.end())
+    {
+	os << iter->first
+	   << ":" << iter->second;
+	++iter;
+    }
+    while (iter != w.user_permission.end())
+    {
+	os << ","
+	   << iter->first
+	   << ":" << iter->second;
+	iter++;
+    }
+    os << "}," << std::put_time(&w.creation_time, "%Y-%m-%d:%H:%M:%SZ")
        << ")";
     return os;
 }
