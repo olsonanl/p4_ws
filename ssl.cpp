@@ -34,9 +34,12 @@ int main(int argc, char **argv)
 
     std::cerr << "valid: " << certs.validate(tok) << "\n";
 
+    AuthToken t3(tok);
+    std::cerr << t3 << "\n";
+
     AuthToken t2("hi there");
     std::cerr << t2 << "\n";
-    
+
     SSL_finish();
     
     return 0;
