@@ -25,12 +25,17 @@ int main(int argc, char **argv)
     SigningCerts certs;
     
     AuthToken tok;
+
+    std::cerr << sizeof(AuthToken) << "\n";
     std::ifstream tstr("/home/olson/.patric_token");
     tstr >> tok;
     std::cerr << tok << "\n";
 
 
     std::cerr << "valid: " << certs.validate(tok) << "\n";
+
+    AuthToken t2("hi there");
+    std::cerr << t2 << "\n";
     
     SSL_finish();
     
