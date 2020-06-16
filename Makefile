@@ -67,7 +67,7 @@ LIBS = $(BOOST)/lib/libboost_system.a \
 	$(BOOST)/lib/libboost_program_options.a \
 	$(BOOST)/lib/libboost_system.a \
 	$(MONGODB_LIBS) \
-	-lpthread
+	-lpthread -lcrypto
 
 ifdef AUTO_DEPLOY_CONFIG
 CXX_DEFINES = -DAPP_SERVICE_URL='"$(APP_SERVICE_URL)"' -DDATA_API_URL='"$(DATA_API_URL)"' -DDEPLOY_LIBDIR='"$(TARGET)/lib"'
@@ -94,7 +94,12 @@ WS_DEPS = WorkspaceState.h JSONRPC.h ServiceDispatcher.h WorkspaceService.h Work
 depend: 
 	makedepend *.cpp *.cc
 
+SigningCerts.h: SigningCerts.h.tt load-signing-certs.pl
+	$(DEPLOY_RUNTIME)/bin/perl load-signing-certs.pl
+
 x: x.o
+	PATH=$(BUILD_TOOLS)/bin:$$PATH $(CXX) -DPIDINFO_TEST_MAIN -g -o $@ $^ $(CXXFLAGS) $(LDFLAGS) $(CXX_LDFLAGS) $(LIBS)
+ssl: ssl.o
 	PATH=$(BUILD_TOOLS)/bin:$$PATH $(CXX) -DPIDINFO_TEST_MAIN -g -o $@ $^ $(CXXFLAGS) $(LDFLAGS) $(CXX_LDFLAGS) $(LIBS)
 
 WorkspaceDB.o p4x-workspace.o: json/include/boost/json.hpp $(WS_DEPS)
@@ -120,6 +125,42 @@ include $(TOP_DIR)/tools/Makefile.common.rules
 p4x-workspace.o: WorkspaceService.h WorkspaceErrors.h WorkspaceState.h
 p4x-workspace.o: DispatchContext.h JSONRPC.h WorkspaceDB.h
 p4x-workspace.o: ServiceDispatcher.h
+ssl.o: AuthToken.h SigningCerts.h /usr/include/openssl/bio.h
+ssl.o: /usr/include/openssl/e_os2.h /usr/include/openssl/opensslconf.h
+ssl.o: /usr/include/openssl/opensslconf-x86_64.h /usr/include/stdio.h
+ssl.o: /usr/include/features.h /usr/include/sys/cdefs.h
+ssl.o: /usr/include/bits/wordsize.h /usr/include/gnu/stubs.h
+ssl.o: /usr/include/gnu/stubs-64.h /usr/include/bits/types.h
+ssl.o: /usr/include/bits/typesizes.h /usr/include/libio.h
+ssl.o: /usr/include/_G_config.h /usr/include/wchar.h
+ssl.o: /usr/include/bits/stdio_lim.h /usr/include/bits/sys_errlist.h
+ssl.o: /usr/include/openssl/crypto.h /usr/include/stdlib.h
+ssl.o: /usr/include/bits/waitflags.h /usr/include/bits/waitstatus.h
+ssl.o: /usr/include/endian.h /usr/include/bits/endian.h
+ssl.o: /usr/include/bits/byteswap.h /usr/include/sys/types.h
+ssl.o: /usr/include/time.h /usr/include/sys/select.h
+ssl.o: /usr/include/bits/select.h /usr/include/bits/sigset.h
+ssl.o: /usr/include/bits/time.h /usr/include/sys/sysmacros.h
+ssl.o: /usr/include/bits/pthreadtypes.h /usr/include/alloca.h
+ssl.o: /usr/include/openssl/stack.h /usr/include/openssl/safestack.h
+ssl.o: /usr/include/openssl/opensslv.h /usr/include/openssl/ossl_typ.h
+ssl.o: /usr/include/openssl/symhacks.h /usr/include/openssl/pem.h
+ssl.o: /usr/include/openssl/evp.h /usr/include/openssl/fips.h
+ssl.o: /usr/include/openssl/objects.h /usr/include/openssl/obj_mac.h
+ssl.o: /usr/include/openssl/asn1.h /usr/include/openssl/bn.h
+ssl.o: /usr/include/limits.h /usr/include/bits/posix1_lim.h
+ssl.o: /usr/include/bits/local_lim.h /usr/include/linux/limits.h
+ssl.o: /usr/include/bits/posix2_lim.h /usr/include/openssl/x509.h
+ssl.o: /usr/include/openssl/buffer.h /usr/include/openssl/ec.h
+ssl.o: /usr/include/openssl/ecdsa.h /usr/include/openssl/ecdh.h
+ssl.o: /usr/include/openssl/rsa.h /usr/include/openssl/dsa.h
+ssl.o: /usr/include/openssl/dh.h /usr/include/openssl/sha.h
+ssl.o: /usr/include/openssl/x509_vfy.h /usr/include/openssl/lhash.h
+ssl.o: /usr/include/openssl/pkcs7.h /usr/include/openssl/pem2.h
+ssl.o: /usr/include/openssl/err.h /usr/include/errno.h
+ssl.o: /usr/include/bits/errno.h /usr/include/linux/errno.h
+ssl.o: /usr/include/asm/errno.h /usr/include/asm-generic/errno.h
+ssl.o: /usr/include/asm-generic/errno-base.h /usr/include/openssl/conf.h
 WorkspaceDB.o: WorkspaceDB.h WorkspaceService.h WorkspaceErrors.h
 WorkspaceDB.o: WorkspaceState.h DispatchContext.h JSONRPC.h
 WorkspaceService.o: WorkspaceService.h WorkspaceErrors.h WorkspaceState.h

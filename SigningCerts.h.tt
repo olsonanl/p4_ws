@@ -1,0 +1,110 @@
+#ifndef _SigningCerts_h
+#define _SigningCerts_h
+
+#include <openssl/bio.h>
+#include <openssl/pem.h>
+#include <openssl/err.h>
+#include <openssl/conf.h>
+#include <openssl/evp.h>
+#include <iostream>
+#include <map>
+
+class SigningCerts
+{
+    std::map<std::string, EVP_PKEY *> certs_;
+
+public:
+    SigningCerts() {
+[% FOR cert IN certs -%]
+{
+    const char * cert = "[% cert.text %]";
+
+    std::cerr << "load [% cert.url %]\n";
+    BIO *b = BIO_new_mem_buf((void *) cert, strlen(cert));
+    RSA *rsa = 0;
+    RSA *keyx = [% cert.func %](b, &rsa, 0, 0);
+
+    if (keyx == 0)
+    {
+	ERR_print_errors_fp(stderr);
+    }
+    else
+    {
+    EVP_PKEY *key = EVP_PKEY_new();
+    int ok = EVP_PKEY_set1_RSA(key, rsa);
+    
+    if (!ok)
+	ERR_print_errors_fp(stderr);
+    else
+	certs_.emplace(std::make_pair("[% cert.url %]", key));
+
+    RSA_free(rsa);
+    BIO_free(b);
+    }
+}
+[% END -%]
+		   
+    }
+
+    ~SigningCerts() {
+	for (auto x = certs_.begin();
+	     x != certs_.end();
+	     x++)
+	{
+	    EVP_PKEY_free(x->second);
+	    x->second = 0;
+	}
+	certs_.clear();
+    }
+
+    EVP_PKEY *key_for_url(const std::string &url) {
+	auto iter = certs_.find(url);
+	if (iter == certs_.end())
+	{
+	    return 0;
+	}
+	else
+	{
+	    return iter->second;
+	}
+    }
+    bool validate(const AuthToken &tok)
+    {
+	if (tok.is_expired())
+	    return false;
+	    
+	EVP_PKEY *key = key_for_url(tok.signing_subject());
+
+	if (key)
+	{
+	    EVP_MD_CTX *mdctx = NULL;
+	    if(!(mdctx = EVP_MD_CTX_create()))
+		throw std::runtime_error("cannot create EVP_MD_CTX");
+	    
+	    if (EVP_DigestVerifyInit(mdctx, NULL, EVP_sha1(), NULL, key) != 1)
+	    {
+		EVP_MD_CTX_destroy(mdctx);
+		throw std::runtime_error("EVP_DigestVerifyInit failed");
+	    }
+	    
+
+	    if (EVP_DigestVerifyUpdate(mdctx, tok.text().data(), tok.text().size()) != 1)
+	    {
+		EVP_MD_CTX_destroy(mdctx);
+		throw std::runtime_error("EVP_DigestVerifyUpdate failed");
+	    }
+
+	    bool ok = (EVP_DigestVerifyFinal(mdctx,
+					     const_cast<unsigned char *>(tok.binary_signature().data()),
+					     tok.binary_signature().size()) == 1);
+	    EVP_MD_CTX_destroy(mdctx);
+	    return ok;
+	}
+	else
+	{
+	    return false;
+	}
+    }
+};
+
+#endif
