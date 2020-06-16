@@ -22,6 +22,8 @@
 #include "JSONRPC.h"
 #include "ServiceDispatcher.h"
 #include "DispatchContext.h"
+#include "AuthToken.h"
+#include "SigningCerts.h"
 
 namespace beast = boost::beast;         // from <boost/beast.hpp>
 namespace http = beast::http;           // from <boost/beast/http.hpp>
@@ -48,6 +50,9 @@ class Session
     http::request_parser<http::buffer_body> header_parser_;
     std::shared_ptr<void> res_;
     std::array<char, 10240> buffer_;
+
+    AuthToken token_;
+    
 public:
     explicit Session(tcp::socket &&socket,
 		     std::shared_ptr<WorkspaceState> state)
@@ -169,6 +174,31 @@ private:
 	    {
 		fail(ec, "async_write 100-continue");
 		return;
+	    }
+	}
+
+	/*
+	 * Extract token from headers if present.
+	 */
+	auto auth_hdr = req["Authorization"];
+	if (auth_hdr != "")
+	{
+	    token_.parse(auth_hdr);
+	    if (token_.valid())
+	    {
+		if (!state_->validate_certificate(token_))
+		{
+		    std::cerr << "Token did not verify: " << token_ << "\n";
+		    token_.invalidate();
+		}
+		else
+		{
+		    std::cerr << "Token validated: " << token_ << "\n";
+		}
+	    }
+	    else
+	    {
+		std::cerr << "invalid token submitted\n";
 	    }
 	}
 
@@ -308,6 +338,8 @@ int main(int argc, char *argv[])
 	return EXIT_FAILURE;
     }
 
+    SSL_init();
+
     std::string db_name("WorkspaceBuild");
     auto const address = net::ip::make_address("0.0.0.0");
     auto const port = static_cast<unsigned short>(std::atoi(argv[1]));
@@ -350,6 +382,7 @@ int main(int argc, char *argv[])
 
     dispatcher->unregister_service("Workspace");
 
+    SSL_finish();
     
     return EXIT_SUCCESS;
 }

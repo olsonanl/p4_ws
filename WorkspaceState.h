@@ -7,6 +7,9 @@
 
 #include <memory>
 
+#include "AuthToken.h"
+#include "SigningCerts.h"
+
 class ServiceDispatcher;
 class WorkspaceDB;
 
@@ -16,6 +19,7 @@ class WorkspaceState : public std::enable_shared_from_this<WorkspaceState>
     bool quit_;
     std::shared_ptr<ServiceDispatcher> dispatcher_;
     std::shared_ptr<WorkspaceDB> db_;
+    SigningCerts certs_;
 
 public:
     WorkspaceState(std::shared_ptr<ServiceDispatcher> dispatcher,
@@ -35,6 +39,9 @@ public:
     std::shared_ptr<ServiceDispatcher> dispatcher() { return dispatcher_; }
 
     std::shared_ptr<WorkspaceDB> db() { return db_; }
+
+    const SigningCerts &signing_certs () const { return certs_; }
+    bool validate_certificate(const AuthToken &tok) { return certs_.validate(tok); }
 };
 
 #endif
