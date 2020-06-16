@@ -42,7 +42,7 @@ public:
     friend std::istream& operator>>(std::istream& is, AuthToken& tok);
 };
 
-std::ostream &operator<<(std::ostream &os, const AuthToken &tok)
+inline std::ostream &operator<<(std::ostream &os, const AuthToken &tok)
 {
     if (tok.is_expired())
 	os << "Expired";
@@ -52,7 +52,7 @@ std::ostream &operator<<(std::ostream &os, const AuthToken &tok)
     return os;
 }
 
-std::istream& operator>>(std::istream& is, AuthToken& tok)
+inline std::istream& operator>>(std::istream& is, AuthToken& tok)
 {
     std::stringstream all;
     bool first = true;
