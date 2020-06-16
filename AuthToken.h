@@ -29,6 +29,12 @@ public:
     }
     AuthToken() : valid_(false) { }
 
+    AuthToken(const AuthToken &t)
+	: parts_(t.parts_)
+	, text_(t.text_)
+	, binary_signature_(t.binary_signature_)
+	, valid_(t.valid_) {}
+
     void parse(boost::string_view &sv) {
 	std::stringstream ifstr(std::string(sv.data(), sv.size()));
 	ifstr >> *this;
