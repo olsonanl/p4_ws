@@ -41,6 +41,7 @@ public:
 	    
 	}
 	catch (boost::json::type_error e) {
+	    std::cerr << "parse error " << e.what() << "\n";
 	    ec = WorkspaceErrc::InvalidJsonRpcRequest;
 	    return;
 	}
@@ -58,20 +59,50 @@ public:
 class JsonRpcResponse
 {
     boost::json::string id_;
-    boost::json::string error_;
+    boost::json::object error_;
     boost::json::array result_;
 
 public:
-    JsonRpcResponse() {}
+    JsonRpcResponse(const JsonRpcRequest &req)
+	: id_(req.id()) {}
 
     const boost::json::string &id() const { return id_; }
-    const boost::json::string &error() const { return error_; }
+    const boost::json::object &error() const { return error_; }
     const boost::json::array &result() const { return result_; }
     boost::json::array &result() { return result_; }
     
     void id(const boost::json::string &id) { id_ = id; }
-    void error(const boost::json::string &error) { error_ = error; }
+    void error(const boost::json::object &error) { error_ = error; }
     void result(const boost::json::array &result) { result_ = result; }
+
+    void set_error(int code, std::string message, boost::json::value data = nullptr) {
+	error_ = {
+		{ "code", code },
+		{ "message", message },
+		{ "data", data },
+	};
+	std::cerr << error_ << "\n";
+
+    }
+
+    boost::json::value full_response() {
+	if (!error_.empty())
+	{
+	    return {
+		{ "jsonrpc", "2.0" },
+		{ "id", id_ },
+		{ "error", error_ }
+	    };
+	}
+	else
+	{
+	    return {
+		{ "jsonrpc", "2.0" },
+		{ "id", id_ },
+		{ "result", result_ }
+	    };
+	}
+    }
 	
     friend std::ostream &operator<<(std::ostream &os, const JsonRpcResponse &req);
 };

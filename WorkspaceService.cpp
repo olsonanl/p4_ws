@@ -40,10 +40,8 @@ bool object_at_as_bool(const json::object &obj, const json::string &key,
 }
 
 void WorkspaceService::method_ls(const JsonRpcRequest &req, JsonRpcResponse &resp,
-				 DispatchContext &dc, boost::system::error_code &ec)
+				 DispatchContext &dc, int &http_code)
 {
-    ec = {};
-    
     auto input = req.params().at(0).as_object();
     auto paths = input.at("paths").as_array();
     bool excludeDirectories = input.at("excludeDirectories").as_bool();
@@ -58,10 +56,8 @@ void WorkspaceService::method_ls(const JsonRpcRequest &req, JsonRpcResponse &res
 }
 
 void WorkspaceService::method_get(const JsonRpcRequest &req, JsonRpcResponse &resp,
-				  DispatchContext &dc, boost::system::error_code &ec)
+				  DispatchContext &dc, int &http_code)
 {
-    ec = {};
-
     bool metadata_only = false;
     json::array objects;
 
@@ -77,33 +73,39 @@ void WorkspaceService::method_get(const JsonRpcRequest &req, JsonRpcResponse &re
 
     } catch (std::invalid_argument e) {
 	BOOST_LOG_SEV(lg_, wslog::debug) << "error parsing: " << e.what() << "\n";
-	ec = WorkspaceErrc::InvalidServiceRequest;
+	resp.set_error(-32602, "Invalid request parameters");
+	http_code = 500;
 	return;
     }
 
     BOOST_LOG_SEV(lg_, wslog::debug) << "metadata_only=" << metadata_only << " adminmode=" << dc.admin_mode << "\n";
 
     json::array output;
-    resp.result().emplace_back(output);
+
+    // Validate format of paths before doing any work
     for (auto obj: objects)
     {
 	BOOST_LOG_SEV(lg_, wslog::debug) << "check " << obj << "\n";
 	if (obj.kind() != json::kind::string)
 	{
-	    ec = WorkspaceErrc::InvalidServiceRequest;
+	    resp.set_error(-32602, "Invalid request parameters");
+	    http_code = 500;
 	    return;
 	}
+    }
 
+    for (auto obj: objects)
+    {
 	WSPath path;
 	ObjectMeta meta;
 
 	global_state_->db()->run_in_thread(dc,
-					   [&path, str = obj.as_string(), &meta]
+					   [&path, path_str = obj.as_string(),  &meta]
 					   (std::unique_ptr<WorkspaceDBQuery> qobj) 
 		{
 		    // wslog::logger l(wslog::channel = "mongo_thread");
 		    
-		    path = qobj->parse_path(str);
+		    path = qobj->parse_path(path_str);
 		    if (qobj->user_has_permission(path.workspace, WSPermission::read))
 			meta = qobj->lookup_object_meta(path);
 		});
@@ -111,6 +113,7 @@ void WorkspaceService::method_get(const JsonRpcRequest &req, JsonRpcResponse &re
 	json::array obj_output( { meta.serialize(), "" });
 	output.emplace_back(obj_output);
     }
+    resp.result().emplace_back(output);
     BOOST_LOG_SEV(lg_, wslog::debug) << output << "\n";
 }
 

@@ -18,7 +18,7 @@ class ServiceDispatcher
     using dispatch_cb = std::function<void(const JsonRpcRequest &,
 					   JsonRpcResponse &,
 					   DispatchContext &dc,
-					   boost::system::error_code &)>;
+					   int &http_code)>;
     using dispatch_map = std::map<boost::json::string, dispatch_cb>;
     dispatch_map map_;
 
@@ -41,14 +41,15 @@ public:
     }
 
     void dispatch(const JsonRpcRequest &req, JsonRpcResponse &resp,
-		  DispatchContext &dc, boost::system::error_code &ec) {
+		  DispatchContext &dc, int &http_code) {
 	auto x = map_.find(req.service());
 	if (x == map_.end())
 	{
-	    ec = WorkspaceErrc::ServiceNotFound;
+	    http_code = 500;
+	    resp.set_error(-32601, "Service not found");
 	    return;
 	}
-	x->second(req, resp, dc, ec);
+	x->second(req, resp, dc, http_code);
     }
 
 };

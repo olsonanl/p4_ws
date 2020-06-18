@@ -125,13 +125,28 @@ class WorkspaceService
 public:
 private:
 
+
     std::shared_ptr<WorkspaceState> global_state_;
 
     typedef void (WorkspaceService::* ptr_to_method)(const JsonRpcRequest &req,
 						     JsonRpcResponse &resp,
 						     DispatchContext &dc,
-						     boost::system::error_code &ec);
-    std::map<const boost::json::string, ptr_to_method> method_map_;
+						     int &http_code);
+
+    enum class Authentication
+    {
+	none,
+	optional,
+	required
+    };
+    
+    struct Method
+    {
+	ptr_to_method method;
+	Authentication auth;
+    };
+
+    std::map<const boost::json::string, Method> method_map_;
 
 public:
     WorkspaceService(std::shared_ptr<WorkspaceState> global_state)
@@ -141,17 +156,50 @@ public:
     }
 
     void dispatch(const JsonRpcRequest &req, JsonRpcResponse &resp,
-		  DispatchContext &dc, boost::system::error_code &ec) {
+		  DispatchContext &dc, int &http_code) {
 	BOOST_LOG_SEV(lg_, wslog::debug) << "ws dispatching " << req << "\n";
 	auto x = method_map_.find(req.method());
 	if (x == method_map_.end())
 	{
-	    ec = WorkspaceErrc::MethodNotFound;
-	    BOOST_LOG_SEV(lg_, wslog::error)  << "method not found " << ec << "\n";
+	    http_code = 500;
+	    resp.set_error(-32601, "Method not found");
 	    return;
 	}
-	ptr_to_method fp = x->second;
-	(this->*fp)(req, resp, dc, ec);
+	Method &method = x->second;
+
+	/*
+	 * Manage auth.
+	 * If auth required or optional, attempt to verify token.
+	 * If auth not required, clear the token.
+	 */
+	if (method.auth == Authentication::none)
+	{
+	    dc.token.clear();
+	}
+	else
+	{
+	    // Authentication is optional or required. Validate token.
+	    // If it does not validate, clear it.
+	    bool valid;
+	    try {
+		valid = global_state_->validate_certificate(dc.token);
+	    } catch (std::exception e) {
+		BOOST_LOG_SEV(lg_, wslog::error) << "exception validating token: " << e.what() << "\n";
+		valid = false;
+	    }
+	    if (!valid)
+		dc.token.clear();
+
+	    if (method.auth == Authentication::required && !valid)
+	    {
+		// Fail
+		resp.set_error(503, "Authentication failed");
+		http_code = 403;
+		return;
+	    }
+	}
+
+	(this->*(method.method))(req, resp, dc, http_code);
     }
 
     const WorkspaceConfig &config() const { return global_state_->config(); }
@@ -159,12 +207,12 @@ public:
 
 private:
     void init_dispatch() {
-	method_map_.emplace(std::make_pair("ls", &WorkspaceService::method_ls));
-	method_map_.emplace(std::make_pair("get", &WorkspaceService::method_get));
+	method_map_.emplace(std::make_pair("ls",  Method { &WorkspaceService::method_ls, Authentication::optional }));
+	method_map_.emplace(std::make_pair("get", Method { &WorkspaceService::method_get, Authentication::required }));
     }
 
-    void method_get(const JsonRpcRequest &req, JsonRpcResponse &resp, DispatchContext &dc, boost::system::error_code	&);
-    void method_ls(const JsonRpcRequest &req, JsonRpcResponse &resp, DispatchContext &dc, boost::system::error_code &);
+    void method_get(const JsonRpcRequest &req, JsonRpcResponse &resp, DispatchContext &dc, int &http_code);
+    void method_ls(const JsonRpcRequest &req, JsonRpcResponse &resp, DispatchContext &dc, int &http_code);
 
 };
 

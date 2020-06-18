@@ -122,23 +122,48 @@ private:
 	    // std::cerr << "parse complete\n";
 	    auto v = parser.release();
 	    // std::cerr << v << "\n";
-	    JsonRpcRequest req;
-	    req.parse(v, ec);
+	    JsonRpcRequest rpc_req;
+	    rpc_req.parse(v, ec);
 	    if (ec)
 	    {
 		fail(ec, "request parse");
 		return;
 	    }
-	    BOOST_LOG_SEV(lg_, wslog::debug) << "request: " << req << "\n";
-	    JsonRpcResponse resp;
+	    BOOST_LOG_SEV(lg_, wslog::debug) << "request: " << rpc_req << "\n";
+	    JsonRpcResponse rpc_resp(rpc_req);
 
 	    DispatchContext dc(yield, stream_.get_executor(), token_);
 
-	    state_->dispatcher()->dispatch(req, resp, dc, ec);
-	    BOOST_LOG_SEV(lg_, wslog::debug) << "dispatch returned " << ec << "\n";
+	    int http_code = 200;
+	    state_->dispatcher()->dispatch(rpc_req, rpc_resp, dc, http_code);
+	    BOOST_LOG_SEV(lg_, wslog::debug) << "dispatch returned " << http_code << "\n";
+
+	    boost::json::value response_value = rpc_resp.full_response();
+	    std::cerr << "returning " << response_value << "\n";
+
+	    /*
+	     * Chunked responses will take some more thought.
+	     
+	    boost::json::serializer sr(response_value);
+	    while (!sr.is_done())
+	    {
+		char buf[10240];
+		auto const n = sr.read(buf, sizeof(buf));
+	    }
+	    */
+
+	    http::response<http::string_body> http_resp;
+	    boost::json::string response_string = boost::json::to_string(response_value);
+	    http_resp.body() = std::string(response_string.data(), response_string.size());
+	    http_resp.set(http::field::server, BOOST_BEAST_VERSION_STRING);
+	    http_resp.set(http::field::content_type, "application/json");
+	    http_resp.keep_alive(message.keep_alive());
+	    http_resp.result(http_code);
+	    http_resp.prepare_payload();
+	    http::async_write(stream_, http_resp, yield[ec]);
 	    if (ec)
 	    {
-		fail(ec, "dispatch");
+		fail(ec, "response write");
 	    }
 	}
 	else
@@ -186,29 +211,9 @@ private:
 	if (auth_hdr != "")
 	{
 	    token_.parse(auth_hdr);
-	    if (token_.valid())
-	    {
-		bool valid;
-		try {
-		    valid = state_->validate_certificate(token_);
-		} catch (std::exception e) {
-		    BOOST_LOG_SEV(lg_, wslog::error) << "exception validating token: " << e.what() << "\n";
-		    valid = false;
-		}
-		if (!valid)
-		{
-		    BOOST_LOG_SEV(lg_, wslog::error) << "Token did not verify: " << token_ << "\n";
-		    token_.invalidate();
-		}
-		else
-		{
-		    BOOST_LOG_SEV(lg_, wslog::debug) << "Token validated: " << token_ << "\n";
-		}
-	    }
-	    else
-	    {
-		BOOST_LOG_SEV(lg_, wslog::error) << "invalid token submitted\n";
-	    }
+	    // We just parse into the token here.
+	    // The decision about if we even need to validate
+	    // it is left to the called code
 	}
 
 	/*
@@ -386,8 +391,8 @@ int main(int argc, char *argv[])
 				 [workspace_service]
 				 (const JsonRpcRequest &req, JsonRpcResponse &resp,
 				  DispatchContext &dc,
-				  boost::system::error_code &ec) {
-				     workspace_service->dispatch(req, resp, dc, ec);
+				  int &http_code) {
+				     workspace_service->dispatch(req, resp, dc, http_code);
 				 });
 
 

@@ -35,6 +35,13 @@ public:
 	, binary_signature_(t.binary_signature_)
 	, valid_(t.valid_) {}
 
+    void clear() {
+	parts_.clear();
+	text_ = "";
+	binary_signature_.clear();
+	valid_ = false;
+    }
+
     void parse(boost::string_view &sv) {
 	std::stringstream ifstr(std::string(sv.data(), sv.size()));
 	ifstr >> *this;
