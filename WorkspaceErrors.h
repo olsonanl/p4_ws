@@ -14,6 +14,7 @@ enum class WorkspaceErrc
 	ServiceNotFound = 2,
 	MethodNotFound = 3,
 	InvalidServiceRequest = 4,
+	PermissionDenied = 5,
 	};
 
 namespace boost
@@ -51,6 +52,8 @@ namespace detail
 		return "method not found";
 	    case WorkspaceErrc::InvalidServiceRequest:
 		return "invalid service request";
+	    case WorkspaceErrc::PermissionDenied:
+		return "permission denied";
 	    default:
 		return "unknown";
 	    }
@@ -64,6 +67,7 @@ namespace detail
 	    case WorkspaceErrc::ServiceNotFound:
 	    case WorkspaceErrc::MethodNotFound:
 	    case WorkspaceErrc::InvalidServiceRequest:
+	    case WorkspaceErrc::PermissionDenied:
 		return make_error_condition(boost::system::errc::invalid_argument);
 	    default:
 		// I have no mapping for this code

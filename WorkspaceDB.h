@@ -14,25 +14,31 @@
 
 #include "WorkspaceService.h"
 #include "WorkspaceTypes.h"
+#include "Logging.h"
 
 class WorkspaceDB;
 
 class WorkspaceDBQuery
+    : public wslog::LoggerBase
 {
 private:
     const AuthToken &token_;
+    bool admin_mode_;
     mongocxx::pool::entry  client_;
     std::shared_ptr<WorkspaceDB> db_;
 public:
-    WorkspaceDBQuery(const AuthToken &token, mongocxx::pool::entry p, std::shared_ptr<WorkspaceDB> db)
+    WorkspaceDBQuery(const AuthToken &token, bool admin_mode, mongocxx::pool::entry p, std::shared_ptr<WorkspaceDB> db)
 	: token_(token)
+	, admin_mode_(admin_mode)
 	, client_(std::move(p))
-	, db_(db) {
+	, db_(db)
+	, wslog::LoggerBase("wsdbq") {
     }
-    ~WorkspaceDBQuery() { std::cerr << "destroy WorkspaceDBQuery\n"; }
+    ~WorkspaceDBQuery() { BOOST_LOG_SEV(lg_, wslog::debug) << "destroy WorkspaceDBQuery\n"; }
     WSPath parse_path(const boost::json::string &p);
     ObjectMeta lookup_object_meta(const WSPath &path);
     const AuthToken &token() { return token_; }
+    bool admin_mode() const { return admin_mode_; }
 
     /*
      * Utility methods.
@@ -42,11 +48,12 @@ public:
      * Calculate effective permission for a workspace.
      */
     WSPermission effective_permission(const WSWorkspace &w);
-    
+    bool user_has_permission(const WSWorkspace &w, WSPermission min_permission);
 };
 
 class WorkspaceDB
-    : public std::enable_shared_from_this<WorkspaceDB>
+    : public wslog::LoggerBase
+    , public std::enable_shared_from_this<WorkspaceDB>
 {
     std::string db_name_;
     mongocxx::uri uri_;
@@ -58,9 +65,9 @@ class WorkspaceDB
 public:
     WorkspaceDB(const std::string &uri, int threads, const std::string &db_name);
 
-    ~WorkspaceDB() { std::cerr << "destroy WorkspaceDB\n"; }
+    ~WorkspaceDB() { BOOST_LOG_SEV(lg_, wslog::debug) << "destroy WorkspaceDB\n"; }
 
-    std::unique_ptr<WorkspaceDBQuery> make_query(const AuthToken &token);
+    std::unique_ptr<WorkspaceDBQuery> make_query(const AuthToken &token, bool admin_mode = false);
 
     const std::string &db_name() { return db_name_; }
     boost::asio::thread_pool &thread_pool() { return thread_pool_; }
@@ -70,17 +77,15 @@ public:
 	dc.timer.expires_at(boost::posix_time::pos_infin);
 	boost::asio::post(thread_pool_,
 			  [&dc, qfunc, this]() {
-			      std::cerr << "in thread\n";
-			      auto q = make_query(dc.token);
+			      auto q = make_query(dc.token, dc.admin_mode);
 			      qfunc(std::move(q));
-			      std::cerr << "thread leaving\n";
 			      dc.timer.cancel_one();
 			  });
 	
 	boost::system::error_code ec({});
 	dc.timer.async_wait(dc.yield[ec]);
 	if (ec != boost::asio::error::operation_aborted)
-	    std::cerr << "async_wait: " << ec.message() << "\n";
+	    BOOST_LOG_SEV(lg_, wslog::error) << "async_wait: " << ec.message() << "\n";
 
     }
 

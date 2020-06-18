@@ -7,13 +7,6 @@
 
 namespace json = boost::json;
 
-// Report a failure
-static void
-fail(boost::system::error_code ec, char const* what)
-{
-    std::cerr << what << ": " << ec.message() << "\n";
-}
-
 bool value_as_bool(const json::value &v)
 {
     switch (v.kind())
@@ -70,7 +63,6 @@ void WorkspaceService::method_get(const JsonRpcRequest &req, JsonRpcResponse &re
     ec = {};
 
     bool metadata_only = false;
-    bool adminmode = false;
     json::array objects;
 
     try {
@@ -78,21 +70,20 @@ void WorkspaceService::method_get(const JsonRpcRequest &req, JsonRpcResponse &re
 	objects = input.at("objects").as_array();
 
 	metadata_only = object_at_as_bool(input, "metadata_only");
-	adminmode =  object_at_as_bool(input, "adminmode");
-	
+	dc.admin_mode =  object_at_as_bool(input, "adminmode");
     } catch (std::invalid_argument e) {
-	std::cerr << "error parsing: " << e.what() << "\n";
+	BOOST_LOG_SEV(lg_, wslog::debug) << "error parsing: " << e.what() << "\n";
 	ec = WorkspaceErrc::InvalidServiceRequest;
 	return;
     }
 
-    std::cerr << "metadata_only=" << metadata_only << " adminmode=" << adminmode << "\n";
+    BOOST_LOG_SEV(lg_, wslog::debug) << "metadata_only=" << metadata_only << " adminmode=" << dc.admin_mode << "\n";
 
     json::array output;
     resp.result().emplace_back(output);
     for (auto obj: objects)
     {
-	std::cerr << "check " << obj << "\n";
+	BOOST_LOG_SEV(lg_, wslog::debug) << "check " << obj << "\n";
 	if (obj.kind() != json::kind::string)
 	{
 	    ec = WorkspaceErrc::InvalidServiceRequest;
@@ -106,15 +97,16 @@ void WorkspaceService::method_get(const JsonRpcRequest &req, JsonRpcResponse &re
 					   [&path, str = obj.as_string(), &meta]
 					   (std::unique_ptr<WorkspaceDBQuery> qobj) 
 		{
-		    std::cerr << "in mongo thread\n";
+		    // wslog::logger l(wslog::channel = "mongo_thread");
+		    
 		    path = qobj->parse_path(str);
-
-		    meta = qobj->lookup_object_meta(path);
+		    if (qobj->user_has_permission(path.workspace, WSPermission::read))
+			meta = qobj->lookup_object_meta(path);
 		});
-	std::cerr << "parsed path " << path << "\n";
+	BOOST_LOG_SEV(lg_, wslog::debug) << "parsed path " << path << "\n";
 	json::array obj_output( { meta.serialize(), "" });
 	output.emplace_back(obj_output);
     }
-    std::cerr << output << "\n";
+    BOOST_LOG_SEV(lg_, wslog::debug) << output << "\n";
 }
 

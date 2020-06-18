@@ -50,12 +50,13 @@ BOOST = $(DEPLOY_RUNTIME)/boost-latest-valgrind
 
 BOOST_JSON = -DBOOST_JSON_HEADER_ONLY -Ijson/include
 
-INCLUDES = -I$(BOOST)/include $(BOOST_JSON) $(MONGODB_CFLAGS)
+INCLUDES = -I$(BOOST)/include $(BOOST_JSON) $(MONGODB_CFLAGS) -Iinih
 CXXFLAGS = $(INCLUDES) -g  -std=c++14 $(CXX_HANDLER_TRACKING) -DBOOST_USE_VALGRIND
 CXX_LDFLAGS = -Wl,-rpath,$(BUILD_TOOLS)/lib64 -Wl,-rpath,$(BOOST)/lib -Wl,-rpath,$(MONGODB_BASE)/lib64
 LDFLAGS = -L$(BOOST)/lib
 
 LIBS = $(BOOST)/lib/libboost_system.a \
+	$(BOOST)/lib/libboost_log.a \
 	$(BOOST)/lib/libboost_filesystem.a \
 	$(BOOST)/lib/libboost_timer.a \
 	$(BOOST)/lib/libboost_chrono.a \
@@ -83,13 +84,11 @@ deploy-service:
 
 binaries: $(TOP_DIR)/bin/p4x-workspace
 
-p4x-workspace: p4x-workspace.o WorkspaceDB.o WorkspaceService.o
+p4x-workspace: p4x-workspace.o WorkspaceDB.o WorkspaceService.o Logging.o ServiceConfig.o
 	PATH=$(BUILD_TOOLS)/bin:$$PATH $(CXX) $(CXX_DEFINES) -g -o $@ $^ $(CXXFLAGS) $(LDFLAGS) $(CXX_LDFLAGS) $(LIBS) -lssl -lcrypto
 
 $(TOP_DIR)/bin/%: %
 	cp $^ $@
-
-WS_DEPS = WorkspaceState.h JSONRPC.h ServiceDispatcher.h WorkspaceService.h WorkspaceDB.h
 
 depend: 
 	makedepend *.cpp *.cc
@@ -99,13 +98,16 @@ SigningCerts.h: SigningCerts.h.tt load-signing-certs.pl
 
 x: x.o
 	PATH=$(BUILD_TOOLS)/bin:$$PATH $(CXX) -DPIDINFO_TEST_MAIN -g -o $@ $^ $(CXXFLAGS) $(LDFLAGS) $(CXX_LDFLAGS) $(LIBS)
+y: y.o Config.o
+	PATH=$(BUILD_TOOLS)/bin:$$PATH $(CXX) -DPIDINFO_TEST_MAIN -g -o $@ $^ $(CXXFLAGS) $(LDFLAGS) $(CXX_LDFLAGS) $(LIBS)
 ssl: ssl.o
 	PATH=$(BUILD_TOOLS)/bin:$$PATH $(CXX) -DPIDINFO_TEST_MAIN -g -o $@ $^ $(CXXFLAGS) $(LDFLAGS) $(CXX_LDFLAGS) $(LIBS)
 
-WorkspaceDB.o p4x-workspace.o: json/include/boost/json.hpp $(WS_DEPS)
-
 json/include/boost/json.hpp: 
 	git clone https://github.com/CPPAlliance/json
+
+inih/INIReader.h:
+	git clone https://github.com/jtilly/inih
 
 pidinfo: pidinfo.cc
 	PATH=$(BUILD_TOOLS)/bin:$$PATH $(CXX) -DPIDINFO_TEST_MAIN -g -o $@ $^ $(CXXFLAGS) $(LDFLAGS) $(CXX_LDFLAGS) $(LIBS)
@@ -122,9 +124,10 @@ include $(TOP_DIR)/tools/Makefile.common.rules
 
 # DO NOT DELETE
 
-p4x-workspace.o: WorkspaceService.h WorkspaceErrors.h WorkspaceState.h
-p4x-workspace.o: AuthToken.h SigningCerts.h /usr/include/openssl/bio.h
-p4x-workspace.o: /usr/include/openssl/e_os2.h
+Logging.o: Logging.h
+p4x-workspace.o: Logging.h WorkspaceService.h WorkspaceErrors.h
+p4x-workspace.o: WorkspaceState.h AuthToken.h SigningCerts.h
+p4x-workspace.o: /usr/include/openssl/bio.h /usr/include/openssl/e_os2.h
 p4x-workspace.o: /usr/include/openssl/opensslconf.h
 p4x-workspace.o: /usr/include/openssl/opensslconf-x86_64.h
 p4x-workspace.o: /usr/include/stdio.h /usr/include/features.h
@@ -164,8 +167,10 @@ p4x-workspace.o: /usr/include/errno.h /usr/include/bits/errno.h
 p4x-workspace.o: /usr/include/linux/errno.h /usr/include/asm/errno.h
 p4x-workspace.o: /usr/include/asm-generic/errno.h
 p4x-workspace.o: /usr/include/asm-generic/errno-base.h
-p4x-workspace.o: /usr/include/openssl/conf.h DispatchContext.h JSONRPC.h
-p4x-workspace.o: WorkspaceDB.h WorkspaceTypes.h ServiceDispatcher.h
+p4x-workspace.o: /usr/include/openssl/conf.h WorkspaceConfig.h
+p4x-workspace.o: ServiceConfig.h DispatchContext.h WorkspaceTypes.h JSONRPC.h
+p4x-workspace.o: WorkspaceDB.h ServiceDispatcher.h
+ServiceConfig.o: ServiceConfig.h
 ssl.o: AuthToken.h SigningCerts.h /usr/include/openssl/bio.h
 ssl.o: /usr/include/openssl/e_os2.h /usr/include/openssl/opensslconf.h
 ssl.o: /usr/include/openssl/opensslconf-x86_64.h /usr/include/stdio.h
@@ -241,8 +246,8 @@ WorkspaceDB.o: /usr/include/openssl/err.h /usr/include/errno.h
 WorkspaceDB.o: /usr/include/bits/errno.h /usr/include/linux/errno.h
 WorkspaceDB.o: /usr/include/asm/errno.h /usr/include/asm-generic/errno.h
 WorkspaceDB.o: /usr/include/asm-generic/errno-base.h
-WorkspaceDB.o: /usr/include/openssl/conf.h DispatchContext.h JSONRPC.h
-WorkspaceDB.o: WorkspaceTypes.h
+WorkspaceDB.o: /usr/include/openssl/conf.h WorkspaceConfig.h ServiceConfig.h
+WorkspaceDB.o: DispatchContext.h WorkspaceTypes.h Logging.h JSONRPC.h
 WorkspaceService.o: WorkspaceService.h WorkspaceErrors.h WorkspaceState.h
 WorkspaceService.o: AuthToken.h SigningCerts.h /usr/include/openssl/bio.h
 WorkspaceService.o: /usr/include/openssl/e_os2.h
@@ -289,5 +294,7 @@ WorkspaceService.o: /usr/include/errno.h /usr/include/bits/errno.h
 WorkspaceService.o: /usr/include/linux/errno.h /usr/include/asm/errno.h
 WorkspaceService.o: /usr/include/asm-generic/errno.h
 WorkspaceService.o: /usr/include/asm-generic/errno-base.h
-WorkspaceService.o: /usr/include/openssl/conf.h DispatchContext.h JSONRPC.h
-WorkspaceService.o: WorkspaceDB.h WorkspaceTypes.h
+WorkspaceService.o: /usr/include/openssl/conf.h WorkspaceConfig.h
+WorkspaceService.o: ServiceConfig.h DispatchContext.h WorkspaceTypes.h
+WorkspaceService.o: Logging.h JSONRPC.h WorkspaceDB.h
+y.o: WorkspaceConfig.h ServiceConfig.h

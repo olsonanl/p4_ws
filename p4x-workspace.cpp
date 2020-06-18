@@ -16,6 +16,7 @@
 #include <string>
 #include <functional>
 
+#include "Logging.h"
 #include "WorkspaceService.h"
 #include "WorkspaceState.h"
 #include "WorkspaceDB.h"
@@ -43,6 +44,7 @@ fail(beast::error_code ec, char const* what)
  */
 class Session
     : public std::enable_shared_from_this<Session>
+    , public wslog::LoggerBase
 {
     beast::tcp_stream stream_;
     beast::flat_static_buffer<10000> buf_;
@@ -57,7 +59,8 @@ public:
     explicit Session(tcp::socket &&socket,
 		     std::shared_ptr<WorkspaceState> state)
 	: stream_(std::move(socket))
-	, state_{state} {
+	, state_{state}
+	, wslog::LoggerBase("session") {
 	    header_parser_.body_limit(1000000);
     }
 
@@ -70,7 +73,6 @@ private:
     void handle_get(decltype(header_parser_)::value_type &req, net::yield_context yield) {
 	if (req.target() == "/quit")
 	{
-	    // std::cerr << "setting  quit\n";
 	    state_->quit(true);
 	    stream_.close();
 	}
@@ -91,9 +93,8 @@ private:
 
 	while (body_remaining.size && !header_parser_.is_done())
 	{
-
 	    http::async_read_some(stream_, buf_, header_parser_, yield[ec]);
-	    // std::cerr << "read returns " << ec << "\n";
+	    BOOST_LOG_SEV(lg_, wslog::debug) << "read returns " << ec << "\n";
 	    if (ec == http::error::need_buffer || ec == http::error::need_buffer)
 	    {
 	    }
@@ -128,13 +129,13 @@ private:
 		fail(ec, "request parse");
 		return;
 	    }
-	    std::cerr << "request: " << req << "\n";
+	    BOOST_LOG_SEV(lg_, wslog::debug) << "request: " << req << "\n";
 	    JsonRpcResponse resp;
 
 	    DispatchContext dc(yield, stream_.get_executor(), token_);
 
 	    state_->dispatcher()->dispatch(req, resp, dc, ec);
-	    std::cerr << "dispatch returned " << ec << "\n";
+	    BOOST_LOG_SEV(lg_, wslog::debug) << "dispatch returned " << ec << "\n";
 	    if (ec)
 	    {
 		fail(ec, "dispatch");
@@ -142,7 +143,7 @@ private:
 	}
 	else
 	{
-	    std::cerr << "at end of stream parse was not complete\n";
+	    BOOST_LOG_SEV(lg_, wslog::notification) << "at end of stream parse was not complete\n";
 	}
 	
     }
@@ -191,22 +192,22 @@ private:
 		try {
 		    valid = state_->validate_certificate(token_);
 		} catch (std::exception e) {
-		    std::cerr << "exception validating token: " << e.what() << "\n";
+		    BOOST_LOG_SEV(lg_, wslog::error) << "exception validating token: " << e.what() << "\n";
 		    valid = false;
 		}
 		if (!valid)
 		{
-		    std::cerr << "Token did not verify: " << token_ << "\n";
+		    BOOST_LOG_SEV(lg_, wslog::error) << "Token did not verify: " << token_ << "\n";
 		    token_.invalidate();
 		}
 		else
 		{
-		    std::cerr << "Token validated: " << token_ << "\n";
+		    BOOST_LOG_SEV(lg_, wslog::debug) << "Token validated: " << token_ << "\n";
 		}
 	    }
 	    else
 	    {
-		std::cerr << "invalid token submitted\n";
+		BOOST_LOG_SEV(lg_, wslog::error) << "invalid token submitted\n";
 	    }
 	}
 
@@ -237,6 +238,7 @@ private:
  */
 class Listener
     : public std::enable_shared_from_this<Listener>
+    , public wslog::LoggerBase
 {
     net::io_context & ioc_;
     tcp::acceptor acceptor_;
@@ -250,7 +252,8 @@ public:
 	: ioc_(ioc)
 	, acceptor_(net::make_strand(ioc))
 	, socket_(net::make_strand(ioc))
-	, state_(state) {
+	, state_(state)
+	, wslog::LoggerBase("listener") {
 
 	beast::error_code ec;
 
@@ -283,7 +286,7 @@ public:
 	    fail(ec, "local_endpoint");
 	    return;
 	}
-	std::cerr << "listening on " << local << "\n";
+	BOOST_LOG_SEV(lg_, wslog::debug) << "listening on " << local << "\n";
 
 	// Start listening
 	acceptor_.listen(net::socket_base::max_listen_connections, ec);
@@ -318,7 +321,7 @@ private:
 		    fail(ec, "remote_endpoint");
 		}
 		
-		std::cerr << "connection from " << peer << "\n";
+		BOOST_LOG_SEV(lg_, wslog::debug) << "connection from " << peer << "\n";
 		
 		
 		// Create the session and run it
@@ -347,6 +350,8 @@ int main(int argc, char *argv[])
     }
 
     SSL_init();
+    wslog::init("", wslog::normal, wslog::debug);
+    wslog::logger lg(wslog::channel = "main");
 
     std::string db_name("WorkspaceBuild");
     auto const address = net::ip::make_address("0.0.0.0");
@@ -354,7 +359,7 @@ int main(int argc, char *argv[])
     auto const threads = std::max<int>(1, std::atoi(argv[2]));
     std::string ws_uri(argv[3]);
 
-    std::cerr << "Listening on " << port << " with " << threads << " threads\n";
+    BOOST_LOG_SEV(lg, wslog::debug) << "Listening on " << port << " with " << threads << " threads\n";
 
     // IO context is required for I/O in C++ Networking
 
@@ -366,7 +371,16 @@ int main(int argc, char *argv[])
     auto db = std::make_shared<WorkspaceDB>(ws_uri, std::max(1, threads - 1), db_name);
 
     auto global_state = std::make_shared<WorkspaceState>(dispatcher, db);
+
+    // Parse config
+    if (!global_state->config().parse())
+    {
+	std::cerr << "Error parsing workspace configuration\n";
+	return 1;
+    }
+    
     auto workspace_service = std::make_shared<WorkspaceService>(global_state);
+
 
     dispatcher->register_service("Workspace",
 				 [workspace_service]

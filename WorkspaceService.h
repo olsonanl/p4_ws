@@ -11,6 +11,7 @@
 #include "WorkspaceState.h"
 #include "DispatchContext.h"
 #include "WorkspaceTypes.h"
+#include "Logging.h"
 
 #include "JSONRPC.h"
 
@@ -43,7 +44,6 @@ namespace boost {
 		std::ostringstream os;
 		os << std::put_time(&t, "%Y-%m-%d:%H:%M:%SZ");
 		jv = os.str();
-		std::cerr << "seralized tm to " << os.str() << "\n";
 	    }
 	};
 
@@ -54,7 +54,6 @@ namespace boost {
 		char c[2];
 		c[0] = static_cast<char>(t);
 		c[1] = '\0';
-		std::cerr << "serialized " << t << " to " << c << "\n";
 		jv = c;
 	    }
 	};
@@ -66,6 +65,7 @@ namespace boost {
 
 
 class WSWorkspace
+    : public wslog::LoggerBase
 {
 public:
     std::string owner;
@@ -77,7 +77,8 @@ public:
     std::tm creation_time;
 
     WSWorkspace()
-	: creation_time({}) {}
+	: wslog::LoggerBase("ws")
+	, creation_time({}) {}
 };
 
 class WSPath
@@ -118,7 +119,8 @@ public:
 };
 
 class WorkspaceService
-    : public std::enable_shared_from_this<WorkspaceService>
+    : public wslog::LoggerBase
+    , public std::enable_shared_from_this<WorkspaceService>
 {
 public:
 private:
@@ -133,18 +135,19 @@ private:
 
 public:
     WorkspaceService(std::shared_ptr<WorkspaceState> global_state)
-	: global_state_(global_state) {
+	: global_state_(global_state)
+	, wslog::LoggerBase("wssvc") {
 	init_dispatch();
     }
 
     void dispatch(const JsonRpcRequest &req, JsonRpcResponse &resp,
 		  DispatchContext &dc, boost::system::error_code &ec) {
-	std::cerr << "ws dispatching " << req << "\n";
+	BOOST_LOG_SEV(lg_, wslog::debug) << "ws dispatching " << req << "\n";
 	auto x = method_map_.find(req.method());
 	if (x == method_map_.end())
 	{
 	    ec = WorkspaceErrc::MethodNotFound;
-	    std::cerr << "method not found " << ec << "\n";
+	    BOOST_LOG_SEV(lg_, wslog::error)  << "method not found " << ec << "\n";
 	    return;
 	}
 	ptr_to_method fp = x->second;

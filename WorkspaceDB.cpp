@@ -167,7 +167,8 @@ WorkspaceDB::WorkspaceDB(const std::string &uri, int threads, const std::string 
     : db_name_(db_name)
     , uri_(uri)
     , pool_(uri_)
-    , thread_pool_(threads) 
+    , thread_pool_(threads)
+    , wslog::LoggerBase("wsdb")
 {
     /* howto. */
 
@@ -197,10 +198,10 @@ WorkspaceDB::WorkspaceDB(const std::string &uri, int threads, const std::string 
  * passing the yield context. 
  */
 
-std::unique_ptr<WorkspaceDBQuery> WorkspaceDB::make_query(const AuthToken &token)
+std::unique_ptr<WorkspaceDBQuery> WorkspaceDB::make_query(const AuthToken &token, bool admin_mode)
 {
     auto pe = pool_.acquire();
-    return std::make_unique<WorkspaceDBQuery>(token, std::move(pe), shared_from_this());
+    return std::make_unique<WorkspaceDBQuery>(token, admin_mode, std::move(pe), shared_from_this());
 }
 
 inline std::string to_string(boost::json::string s)
@@ -241,13 +242,13 @@ ObjectMeta WorkspaceDBQuery::lookup_object_meta(const WSPath &o)
 	qry.append(kvp("name", o.name));
 	qry.append(kvp("workspace_uuid", o.workspace.uuid));
 
-	std::cerr << "qry: " << bsoncxx::to_json(qry.view()) << "\n";
+	BOOST_LOG_SEV(lg_, wslog::debug) << "qry: " << bsoncxx::to_json(qry.view()) << "\n";
 	auto cursor = coll.find(qry.view());
 
 	auto ent = cursor.begin();
 	if (ent == cursor.end())
 	{
-	    std::cerr << "Not found\n";
+	    BOOST_LOG_SEV(lg_, wslog::debug) << "Not found\n";
 	    return meta;
 	}
 	auto &obj = *ent;
@@ -274,7 +275,7 @@ ObjectMeta WorkspaceDBQuery::lookup_object_meta(const WSPath &o)
 
 WSPath WorkspaceDBQuery::parse_path(const boost::json::string &pstr)
 {
-    std::cerr << "validating " << pstr << "\n";
+    BOOST_LOG_SEV(lg_, wslog::debug) << "validating " << pstr << "\n";
 
     auto coll = (*client_)[db_->db_name()]["workspaces"];
 
@@ -312,7 +313,7 @@ WSPath WorkspaceDBQuery::parse_path(const boost::json::string &pstr)
 	qry.append(kvp("owner", path.workspace.owner));
 	qry.append(kvp("name", path.workspace.name));
     
- 	// std::cerr << "qry: " << bsoncxx::to_json(qry.view()) << "\n";
+ 	// BOOST_LOG_SEV(lg_, wslog::debug) << "qry: " << bsoncxx::to_json(qry.view()) << "\n";
 
 	auto cursor = coll.find(qry.view());
 	auto ent = cursor.begin();
@@ -322,7 +323,7 @@ WSPath WorkspaceDBQuery::parse_path(const boost::json::string &pstr)
 
 	auto &obj = *ent;
 
-	std::cerr << "obj: " << bsoncxx::to_json(obj) << "\n";
+	BOOST_LOG_SEV(lg_, wslog::debug) << "obj: " << bsoncxx::to_json(obj) << "\n";
 
 	auto uuid = obj["uuid"];
 	auto cdate = obj["creation_date"];
@@ -332,7 +333,7 @@ WSPath WorkspaceDBQuery::parse_path(const boost::json::string &pstr)
 	ent++;
 	if (ent != cursor.end())
 	{
-	    std::cerr << "nonunique workspace!\n";
+	    BOOST_LOG_SEV(lg_, wslog::debug) << "nonunique workspace!\n";
 	}
 
 	path.workspace.uuid = static_cast<std::string>(uuid.get_utf8().value);
@@ -345,7 +346,7 @@ WSPath WorkspaceDBQuery::parse_path(const boost::json::string &pstr)
 	ss >> std::get_time(&path.workspace.creation_time, "%Y-%m-%dT%H:%M:%SZ");
 	if (ss.fail())
 	{
-	    std::cerr << "creation date parse failed '" << creation_time << "'\n";
+	    BOOST_LOG_SEV(lg_, wslog::debug) << "creation date parse failed '" << creation_time << "'\n";
 	}
 
 	for (auto p: all_perms)
@@ -355,13 +356,13 @@ WSPath WorkspaceDBQuery::parse_path(const boost::json::string &pstr)
 	    if (url_decode(p.first, user))
 	    {
 		path.workspace.user_permission.insert(std::make_pair(user, p.second));
-		// std::cerr << user << ": " << p.second << "\n";
+		// BOOST_LOG_SEV(lg_, wslog::debug) << user << ": " << p.second << "\n";
 	    }
 	}
     }
     else
     {
-	std::cerr << "No match for " << pstr<< "\n";
+	BOOST_LOG_SEV(lg_, wslog::debug) << "No match for " << pstr<< "\n";
     }
     
     
@@ -370,23 +371,23 @@ WSPath WorkspaceDBQuery::parse_path(const boost::json::string &pstr)
 
 WSPermission WorkspaceDBQuery::effective_permission(const WSWorkspace &w)
 {
-    std::cerr << "compute permission for user " << token() << " and workspace owned by " << w.owner << "\n";
+    BOOST_LOG_SEV(lg_, wslog::debug) << "compute permission for user " << token() << " and workspace owned by " << w.owner << "\n";
 
     if (!token().valid())
     {
-	std::cerr << "  global fallback for invalid token\n";
+	BOOST_LOG_SEV(lg_, wslog::debug) << "  global fallback for invalid token\n";
 	return w.global_permission;
     }
 
     if (w.global_permission == WSPermission::public_)
     {
-	std::cerr << "  is public\n";
+	BOOST_LOG_SEV(lg_, wslog::debug) << "  is public\n";
 	return WSPermission::public_;
     }
 
     if (w.owner == token().user())
     {
-	std::cerr << "  is owner\n";
+	BOOST_LOG_SEV(lg_, wslog::debug) << "  is owner\n";
 	return WSPermission::owner;
     }
 
@@ -411,11 +412,31 @@ WSPermission WorkspaceDBQuery::effective_permission(const WSWorkspace &w)
 	    
 	    if (rank_user > rank_global)
 	    {
-		std::cerr << "  ranks " << rank_user << " " << rank_global << " determined " << user_perm << "\n";
+		BOOST_LOG_SEV(lg_, wslog::debug) << "  ranks " << rank_user << " " << rank_global << " determined " << user_perm << "\n";
 		return user_perm;
 	    }
 	}
     }
-    std::cerr << "  global fallback\n";
+    BOOST_LOG_SEV(lg_, wslog::debug) << "  global fallback\n";
     return w.global_permission;
+}
+
+bool WorkspaceDBQuery::user_has_permission(const WSWorkspace &w, WSPermission min_permission)
+{
+    if (admin_mode())
+	return true;
+
+    static std::map<WSPermission, int> perm_ranks {
+	{ WSPermission::none, 0 },
+	{ WSPermission::invalid, 0 },
+	{ WSPermission::public_, 1 },
+	{ WSPermission::read, 1 },
+	{ WSPermission::write, 2 },
+	{ WSPermission::admin, 3 },
+	{ WSPermission::owner, 4 }
+    };
+
+    int rank_user = perm_ranks[effective_permission(w)];
+    int rank_needed = perm_ranks[min_permission];
+    return rank_user >= rank_needed;
 }

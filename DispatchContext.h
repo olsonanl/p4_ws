@@ -8,16 +8,18 @@
 class DispatchContext
 {
 public:
-    DispatchContext(boost::asio::yield_context &y,  boost::asio::executor e, const AuthToken &t)
+    DispatchContext(boost::asio::yield_context &y,  boost::asio::executor e, const AuthToken &t, bool admin_modex = false)
 	: yield(y)
 	, timer(e)
 	, token(t)
+	, admin_mode(admin_modex)
     {}
 
     
     boost::asio::yield_context yield;
     boost::asio::deadline_timer timer;
     AuthToken token;
+    bool admin_mode;
 };
 
 
