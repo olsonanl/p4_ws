@@ -70,7 +70,11 @@ void WorkspaceService::method_get(const JsonRpcRequest &req, JsonRpcResponse &re
 	objects = input.at("objects").as_array();
 
 	metadata_only = object_at_as_bool(input, "metadata_only");
-	dc.admin_mode =  object_at_as_bool(input, "adminmode");
+	if (object_at_as_bool(input, "adminmode"))
+	{
+	    dc.admin_mode = config().user_is_admin(dc.token.user());
+	}
+
     } catch (std::invalid_argument e) {
 	BOOST_LOG_SEV(lg_, wslog::debug) << "error parsing: " << e.what() << "\n";
 	ec = WorkspaceErrc::InvalidServiceRequest;

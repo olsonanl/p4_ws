@@ -154,6 +154,8 @@ public:
 	(this->*fp)(req, resp, dc, ec);
     }
 
+    const WorkspaceConfig &config() const { return global_state_->config(); }
+
 
 private:
     void init_dispatch() {
