@@ -98,7 +98,7 @@ SigningCerts.h: SigningCerts.h.tt load-signing-certs.pl
 
 x: x.o
 	PATH=$(BUILD_TOOLS)/bin:$$PATH $(CXX) -DPIDINFO_TEST_MAIN -g -o $@ $^ $(CXXFLAGS) $(LDFLAGS) $(CXX_LDFLAGS) $(LIBS)
-y: y.o Config.o
+y: y.o Shock.o
 	PATH=$(BUILD_TOOLS)/bin:$$PATH $(CXX) -DPIDINFO_TEST_MAIN -g -o $@ $^ $(CXXFLAGS) $(LDFLAGS) $(CXX_LDFLAGS) $(LIBS)
 ssl: ssl.o
 	PATH=$(BUILD_TOOLS)/bin:$$PATH $(CXX) -DPIDINFO_TEST_MAIN -g -o $@ $^ $(CXXFLAGS) $(LDFLAGS) $(CXX_LDFLAGS) $(LIBS)
@@ -297,4 +297,4 @@ WorkspaceService.o: /usr/include/asm-generic/errno-base.h
 WorkspaceService.o: /usr/include/openssl/conf.h WorkspaceConfig.h
 WorkspaceService.o: ServiceConfig.h DispatchContext.h WorkspaceTypes.h
 WorkspaceService.o: Logging.h JSONRPC.h WorkspaceDB.h
-y.o: WorkspaceConfig.h ServiceConfig.h
+y.o: Shock.h AuthToken.h parse_url.h
