@@ -11,27 +11,36 @@
 inline void load_root_certificates(std::istream &istr, boost::asio::ssl::context &ctx,
 				   boost::system::error_code &ec)
 {
-    std::stringstream sstr;
+    std::string cert;
 
     while (istr)
     {
 	std::array<char,10240> line;
 
-	while (istr.getline(line.data(), line.size()))
+	while (istr.getline(line.data(), line.size(), '\n'))
 	{
-	    if (std::strncmp(line.data(),  "-----BEGIN CERTIFICATE-----\n", line.size()) == 0)
+	    if (std::strncmp(line.data(),  "-----BEGIN CERTIFICATE-----", line.size()) == 0)
 	    {
-		sstr << line.data();
+		cert += line.data();
+		cert += "\n";
 		break;
 	    }
 	}
-	while (istr.getline(line.data(), line.size()))
+	while (istr.getline(line.data(), line.size(), '\n'))
 	{
-	    sstr << line.data();
-	    if (std::strncmp(line.data(), "-----END CERTIFICATE-----\n", line.size()) == 0)
+	    cert += line.data();
+	    cert += "\n";
+	    if (std::strncmp(line.data(), "-----END CERTIFICATE-----", line.size()) == 0)
 	    {
-		std::cerr << "got cert:" << sstr.str() << ":\n";
-		sstr.str(std::string());
+		ctx.add_certificate_authority(
+		    boost::asio::buffer(cert.data(), cert.size()), ec);
+		if (ec)
+		{
+		    std::cerr << "error loading cert: " << ec.message() << "\n";
+		}
+
+		cert.clear();
+		break;
 	    }
 	}
     }

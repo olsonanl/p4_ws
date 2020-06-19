@@ -34,6 +34,7 @@ public:
 	: parts_(t.parts_)
 	, text_(t.text_)
 	, binary_signature_(t.binary_signature_)
+	, token_(t.token_)
 	, valid_(t.valid_) {}
 
     void clear() {
@@ -80,6 +81,7 @@ inline std::ostream &operator<<(std::ostream &os, const AuthToken &tok)
 	    os << "Expired";
 	os << "Token(" <<
 	    tok.user() <<
+	    ", " << tok.token() <<
 	    ")";
     }
     else

@@ -10,6 +10,7 @@
 #include "AuthToken.h"
 #include "SigningCerts.h"
 #include "WorkspaceConfig.h"
+#include "Shock.h"
 
 class ServiceDispatcher;
 class WorkspaceDB;
@@ -22,15 +23,17 @@ class WorkspaceState : public std::enable_shared_from_this<WorkspaceState>
     std::shared_ptr<WorkspaceDB> db_;
     SigningCerts certs_;
     WorkspaceConfig config_;
+    Shock shock_;
 
 public:
     WorkspaceState(std::shared_ptr<ServiceDispatcher> dispatcher,
-		   std::shared_ptr<WorkspaceDB> db
-	)
+		   std::shared_ptr<WorkspaceDB> db,
+		   Shock shock)
 	: api_root_("/api")
 	, quit_(false)
 	, dispatcher_(dispatcher)
-	, db_(db) {
+	, db_(db)
+	, shock_(std::move(shock)) {
     }
     ~WorkspaceState() { std::cerr << "destroy  WorkspaceState\n"; }
 
@@ -47,6 +50,7 @@ public:
 
     WorkspaceConfig &config() { return config_; }
     const WorkspaceConfig &config() const { return config_; }
+    Shock &shock() { return shock_; }
 };
 
 #endif

@@ -45,6 +45,17 @@ public:
 	    ec = WorkspaceErrc::InvalidJsonRpcRequest;
 	    return;
 	}
+	catch (std::exception e) {
+	    std::cerr << "other error " << e.what() << "\n";
+	    ec = WorkspaceErrc::InvalidJsonRpcRequest;
+	    return;
+	}
+	catch(...)
+	{
+	    std::cerr << "other error!\n";
+	    ec = WorkspaceErrc::InvalidJsonRpcRequest;
+	    return;
+	}
     }
 
     const boost::json::string &id() const { return id_; }

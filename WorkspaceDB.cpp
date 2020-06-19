@@ -273,6 +273,28 @@ ObjectMeta WorkspaceDBQuery::lookup_object_meta(const WSPath &o)
     return meta;
 }
 
+ObjectMeta WorkspaceDBQuery::metadata_from_db(const WSWorkspace &ws, const bsoncxx::document::view &obj)
+{
+    ObjectMeta meta;
+    
+    meta.name = get_string(obj, "name");
+    meta.type = get_string(obj, "type");
+    meta.path = "/" + ws.owner + "/" + get_string(obj, "path");
+    meta.creation_time = get_tm(obj, "creation_date");
+    meta.id = get_string(obj, "uuid");
+    meta.owner = get_string(obj, "owner");
+    meta.size = get_int64(obj, "size");
+    meta.user_metadata = get_map(obj, "metadata");
+    meta.auto_metadata = get_map(obj, "autometadata");
+    meta.user_permission = effective_permission(ws);
+    meta.global_permission = ws.global_permission;
+    if (get_int64(obj, "shock"))
+    {
+	meta.shockurl = get_string(obj, "shocknode");
+    }
+    return meta;
+}
+
 WSPath WorkspaceDBQuery::parse_path(const boost::json::string &pstr)
 {
     BOOST_LOG_SEV(lg_, wslog::debug) << "validating " << pstr << "\n";
@@ -371,23 +393,23 @@ WSPath WorkspaceDBQuery::parse_path(const boost::json::string &pstr)
 
 WSPermission WorkspaceDBQuery::effective_permission(const WSWorkspace &w)
 {
-    BOOST_LOG_SEV(lg_, wslog::debug) << "compute permission for user " << token() << " and workspace owned by " << w.owner << "\n";
+    // BOOST_LOG_SEV(lg_, wslog::debug) << "compute permission for user " << token() << " and workspace owned by " << w.owner << "\n";
 
     if (!token().valid())
     {
-	BOOST_LOG_SEV(lg_, wslog::debug) << "  global fallback for invalid token\n";
+	// BOOST_LOG_SEV(lg_, wslog::debug) << "  global fallback for invalid token\n";
 	return w.global_permission;
     }
 
     if (w.global_permission == WSPermission::public_)
     {
-	BOOST_LOG_SEV(lg_, wslog::debug) << "  is public\n";
+	// BOOST_LOG_SEV(lg_, wslog::debug) << "  is public\n";
 	return WSPermission::public_;
     }
 
     if (w.owner == token().user())
     {
-	BOOST_LOG_SEV(lg_, wslog::debug) << "  is owner\n";
+	// BOOST_LOG_SEV(lg_, wslog::debug) << "  is owner\n";
 	return WSPermission::owner;
     }
 
@@ -412,12 +434,12 @@ WSPermission WorkspaceDBQuery::effective_permission(const WSWorkspace &w)
 	    
 	    if (rank_user > rank_global)
 	    {
-		BOOST_LOG_SEV(lg_, wslog::debug) << "  ranks " << rank_user << " " << rank_global << " determined " << user_perm << "\n";
+		// BOOST_LOG_SEV(lg_, wslog::debug) << "  ranks " << rank_user << " " << rank_global << " determined " << user_perm << "\n";
 		return user_perm;
 	    }
 	}
     }
-    BOOST_LOG_SEV(lg_, wslog::debug) << "  global fallback\n";
+    // BOOST_LOG_SEV(lg_, wslog::debug) << "  global fallback\n";
     return w.global_permission;
 }
 
@@ -439,4 +461,38 @@ bool WorkspaceDBQuery::user_has_permission(const WSWorkspace &w, WSPermission mi
     int rank_user = perm_ranks[effective_permission(w)];
     int rank_needed = perm_ranks[min_permission];
     return rank_user >= rank_needed;
+}
+
+void WorkspaceDBQuery::list_objects(const WSPath &path, bool excludeDirectories, bool excludeObjects, bool recursive)
+{
+    auto coll = (*client_)[db_->db_name()]["objects"];
+
+    auto qry = builder::basic::document{};
+
+    qry.append(kvp("workspace_uuid", path.workspace.uuid));
+    if (excludeDirectories)
+	qry.append(kvp("folder", 0));
+    else if (excludeObjects)
+	qry.append(kvp("folder", 1));
+
+    if (recursive)
+    {
+        auto regex = bsoncxx::types::b_regex("^" + path.full_path(), "");
+	qry.append(kvp("path", regex));
+    }
+    else
+    {
+	qry.append(kvp("path", path.full_path()));
+    }
+    auto cursor = coll.find(qry.view());
+    BOOST_LOG_SEV(lg_, wslog::debug) << "qry: " << bsoncxx::to_json(qry.view()) << "\n";
+
+    for (auto ent = cursor.begin(); ent != cursor.end(); ent++)
+    {
+	auto &obj = *ent;
+
+	ObjectMeta meta = metadata_from_db(path.workspace, obj);
+	BOOST_LOG_SEV(lg_, wslog::debug) << "obj: " << meta << "\n";
+    }
+
 }

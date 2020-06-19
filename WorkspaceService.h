@@ -15,6 +15,8 @@
 
 #include "JSONRPC.h"
 
+class WorkspaceDBQuery;
+
 namespace boost {
     namespace json {
 
@@ -87,6 +89,15 @@ public:
     WSWorkspace workspace;
     std::string path;
     std::string name;
+
+    bool is_workspace_path() const { return path == "" && name == ""; }
+    inline std::string full_path() const {
+	std::string res = path;
+	if (!res.empty())
+	    res += "/";
+	res += name;
+	return res;
+    }
 };
 
 class ObjectMeta
@@ -202,18 +213,34 @@ public:
 	(this->*(method.method))(req, resp, dc, http_code);
     }
 
-    const WorkspaceConfig &config() const { return global_state_->config(); }
-
-
+    inline const WorkspaceConfig &config() const { return global_state_->config(); }
+    inline std::string filesystem_path_for_object(const WSPath &obj) {
+	std::string res = config().filesystem_base();
+	res += "/P3WSDB/";
+	res += obj.workspace.owner;
+	res += "/";
+	res += obj.workspace.name;
+	res += "/";
+	res += obj.path;
+	res += "/";
+	res += obj.name;
+	return res;
+    }
+    
+    
 private:
     void init_dispatch() {
 	method_map_.emplace(std::make_pair("ls",  Method { &WorkspaceService::method_ls, Authentication::optional }));
-	method_map_.emplace(std::make_pair("get", Method { &WorkspaceService::method_get, Authentication::required }));
+	method_map_.emplace(std::make_pair("get", Method { &WorkspaceService::method_get, Authentication::optional }));
     }
 
     void method_get(const JsonRpcRequest &req, JsonRpcResponse &resp, DispatchContext &dc, int &http_code);
     void method_ls(const JsonRpcRequest &req, JsonRpcResponse &resp, DispatchContext &dc, int &http_code);
 
+    void process_ls(std::unique_ptr<WorkspaceDBQuery> qobj,
+		    DispatchContext &dc, boost::json::array &paths, boost::json::array &output,
+		    bool excludeDirectories, bool excludeObjects, bool recursive, bool fullHierachicalOutput);
+	
 };
 
 inline std::ostream &operator<<(std::ostream &os, const WSWorkspace &w)
@@ -253,5 +280,16 @@ inline std::ostream &operator<<(std::ostream &os, const WSPath &p)
     return os;
 }
 
-
+inline std::ostream &operator<<(std::ostream &os, const ObjectMeta &m)
+{
+    os << "ObjectMeta("
+       << m.name
+       << "," << m.type
+       << "," << m.path
+       << "," << m.id
+       << "," << m.owner
+       << "," << m.shockurl
+       << ")";
+    return  os;
+}
 #endif

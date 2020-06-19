@@ -10,6 +10,7 @@ include $(TOP_DIR)/tools/Makefile.common
  # 3703  ls cmake-build/
  # 3704  cd cmake-build/
  # 3705  CXX=$d/bin/g++ CC=$d/bin/gcc cmake  ..  -DCMAKE_INSTALL_PREFIX=/home/olson/P3/dev-slurm/dev_container/modules/p4_ws/mongodb 
+#  -DCMAKE_PREFIX_PATH=/disks/patric-common/runtime/ssl_1.1.1g
  # 3706  make -j16
  # 3707  make install
 
@@ -41,7 +42,7 @@ CXX = $(BUILD_TOOLS)/bin/g++
 
 # CXX_HANDLER_TRACKING = -DBOOST_ASIO_ENABLE_HANDLER_TRACKING
 
-MONGODB_BASE = $(shell pwd)/mongodb
+MONGODB_BASE = $(shell pwd)/mongodb-ssl-1.1
 PKG_CONFIG_PATH = $(MONGODB_BASE)/lib64/pkgconfig
 MONGODB_CFLAGS = $(shell PKG_CONFIG_PATH=$(PKG_CONFIG_PATH) pkg-config --cflags libmongocxx)
 MONGODB_LIBS = $(shell PKG_CONFIG_PATH=$(PKG_CONFIG_PATH) pkg-config --libs libmongocxx)
@@ -50,9 +51,14 @@ BOOST = $(DEPLOY_RUNTIME)/boost-latest-valgrind
 
 BOOST_JSON = -DBOOST_JSON_HEADER_ONLY -Ijson/include
 
-INCLUDES = -I$(BOOST)/include $(BOOST_JSON) $(MONGODB_CFLAGS) -Iinih
+OPENSSL = /disks/patric-common/runtime/ssl_1.1.1g
+OPENSSL_INCLUDE = -I$(OPENSSL)/include
+OPENSSL_LDFLAGS = -Wl,-rpath,$(OPENSSL)/lib
+OPENSSL_LIBS = -L$(OPENSSL)/lib -lcrypto -lssl
+
+INCLUDES = -I$(BOOST)/include $(BOOST_JSON) $(MONGODB_CFLAGS) -Iinih $(OPENSSL_INCLUDE)
 CXXFLAGS = $(INCLUDES) -g  -std=c++14 $(CXX_HANDLER_TRACKING) -DBOOST_USE_VALGRIND
-CXX_LDFLAGS = -Wl,-rpath,$(BUILD_TOOLS)/lib64 -Wl,-rpath,$(BOOST)/lib -Wl,-rpath,$(MONGODB_BASE)/lib64
+CXX_LDFLAGS = -Wl,-rpath,$(BUILD_TOOLS)/lib64 -Wl,-rpath,$(BOOST)/lib -Wl,-rpath,$(MONGODB_BASE)/lib64 $(OPENSSL_LDFLAGS)
 LDFLAGS = -L$(BOOST)/lib
 
 LIBS = $(BOOST)/lib/libboost_system.a \
@@ -68,7 +74,8 @@ LIBS = $(BOOST)/lib/libboost_system.a \
 	$(BOOST)/lib/libboost_program_options.a \
 	$(BOOST)/lib/libboost_system.a \
 	$(MONGODB_LIBS) \
-	-lpthread -lcrypto
+	-lpthread \
+	$(OPENSSL_LIBS)
 
 ifdef AUTO_DEPLOY_CONFIG
 CXX_DEFINES = -DAPP_SERVICE_URL='"$(APP_SERVICE_URL)"' -DDATA_API_URL='"$(DATA_API_URL)"' -DDEPLOY_LIBDIR='"$(TARGET)/lib"'
@@ -84,7 +91,7 @@ deploy-service:
 
 binaries: $(TOP_DIR)/bin/p4x-workspace
 
-p4x-workspace: p4x-workspace.o WorkspaceDB.o WorkspaceService.o Logging.o ServiceConfig.o
+p4x-workspace: p4x-workspace.o WorkspaceDB.o WorkspaceService.o Logging.o ServiceConfig.o Shock.o
 	PATH=$(BUILD_TOOLS)/bin:$$PATH $(CXX) $(CXX_DEFINES) -g -o $@ $^ $(CXXFLAGS) $(LDFLAGS) $(CXX_LDFLAGS) $(LIBS) -lssl -lcrypto
 
 $(TOP_DIR)/bin/%: %
@@ -168,9 +175,10 @@ p4x-workspace.o: /usr/include/linux/errno.h /usr/include/asm/errno.h
 p4x-workspace.o: /usr/include/asm-generic/errno.h
 p4x-workspace.o: /usr/include/asm-generic/errno-base.h
 p4x-workspace.o: /usr/include/openssl/conf.h WorkspaceConfig.h
-p4x-workspace.o: ServiceConfig.h DispatchContext.h WorkspaceTypes.h JSONRPC.h
-p4x-workspace.o: WorkspaceDB.h ServiceDispatcher.h
+p4x-workspace.o: ServiceConfig.h Shock.h parse_url.h DispatchContext.h
+p4x-workspace.o: WorkspaceTypes.h JSONRPC.h WorkspaceDB.h ServiceDispatcher.h
 ServiceConfig.o: ServiceConfig.h
+Shock.o: Shock.h AuthToken.h parse_url.h
 ssl.o: AuthToken.h SigningCerts.h /usr/include/openssl/bio.h
 ssl.o: /usr/include/openssl/e_os2.h /usr/include/openssl/opensslconf.h
 ssl.o: /usr/include/openssl/opensslconf-x86_64.h /usr/include/stdio.h
@@ -247,7 +255,8 @@ WorkspaceDB.o: /usr/include/bits/errno.h /usr/include/linux/errno.h
 WorkspaceDB.o: /usr/include/asm/errno.h /usr/include/asm-generic/errno.h
 WorkspaceDB.o: /usr/include/asm-generic/errno-base.h
 WorkspaceDB.o: /usr/include/openssl/conf.h WorkspaceConfig.h ServiceConfig.h
-WorkspaceDB.o: DispatchContext.h WorkspaceTypes.h Logging.h JSONRPC.h
+WorkspaceDB.o: Shock.h parse_url.h DispatchContext.h WorkspaceTypes.h
+WorkspaceDB.o: Logging.h JSONRPC.h
 WorkspaceService.o: WorkspaceService.h WorkspaceErrors.h WorkspaceState.h
 WorkspaceService.o: AuthToken.h SigningCerts.h /usr/include/openssl/bio.h
 WorkspaceService.o: /usr/include/openssl/e_os2.h
@@ -295,6 +304,37 @@ WorkspaceService.o: /usr/include/linux/errno.h /usr/include/asm/errno.h
 WorkspaceService.o: /usr/include/asm-generic/errno.h
 WorkspaceService.o: /usr/include/asm-generic/errno-base.h
 WorkspaceService.o: /usr/include/openssl/conf.h WorkspaceConfig.h
-WorkspaceService.o: ServiceConfig.h DispatchContext.h WorkspaceTypes.h
-WorkspaceService.o: Logging.h JSONRPC.h WorkspaceDB.h
-y.o: Shock.h AuthToken.h parse_url.h
+WorkspaceService.o: ServiceConfig.h Shock.h parse_url.h DispatchContext.h
+WorkspaceService.o: WorkspaceTypes.h Logging.h JSONRPC.h WorkspaceDB.h
+y.o: Shock.h AuthToken.h parse_url.h RootCertificates.h
+y.o: /usr/include/openssl/x509v3.h /usr/include/openssl/bio.h
+y.o: /usr/include/openssl/e_os2.h /usr/include/openssl/opensslconf.h
+y.o: /usr/include/openssl/opensslconf-x86_64.h /usr/include/stdio.h
+y.o: /usr/include/features.h /usr/include/sys/cdefs.h
+y.o: /usr/include/bits/wordsize.h /usr/include/gnu/stubs.h
+y.o: /usr/include/gnu/stubs-64.h /usr/include/bits/types.h
+y.o: /usr/include/bits/typesizes.h /usr/include/libio.h
+y.o: /usr/include/_G_config.h /usr/include/wchar.h
+y.o: /usr/include/bits/stdio_lim.h /usr/include/bits/sys_errlist.h
+y.o: /usr/include/openssl/crypto.h /usr/include/stdlib.h
+y.o: /usr/include/bits/waitflags.h /usr/include/bits/waitstatus.h
+y.o: /usr/include/endian.h /usr/include/bits/endian.h
+y.o: /usr/include/bits/byteswap.h /usr/include/sys/types.h
+y.o: /usr/include/time.h /usr/include/sys/select.h /usr/include/bits/select.h
+y.o: /usr/include/bits/sigset.h /usr/include/bits/time.h
+y.o: /usr/include/sys/sysmacros.h /usr/include/bits/pthreadtypes.h
+y.o: /usr/include/alloca.h /usr/include/openssl/stack.h
+y.o: /usr/include/openssl/safestack.h /usr/include/openssl/opensslv.h
+y.o: /usr/include/openssl/ossl_typ.h /usr/include/openssl/symhacks.h
+y.o: /usr/include/openssl/x509.h /usr/include/openssl/buffer.h
+y.o: /usr/include/openssl/evp.h /usr/include/openssl/fips.h
+y.o: /usr/include/openssl/objects.h /usr/include/openssl/obj_mac.h
+y.o: /usr/include/openssl/asn1.h /usr/include/openssl/bn.h
+y.o: /usr/include/limits.h /usr/include/bits/posix1_lim.h
+y.o: /usr/include/bits/local_lim.h /usr/include/linux/limits.h
+y.o: /usr/include/bits/posix2_lim.h /usr/include/openssl/ec.h
+y.o: /usr/include/openssl/ecdsa.h /usr/include/openssl/ecdh.h
+y.o: /usr/include/openssl/rsa.h /usr/include/openssl/dsa.h
+y.o: /usr/include/openssl/dh.h /usr/include/openssl/sha.h
+y.o: /usr/include/openssl/x509_vfy.h /usr/include/openssl/lhash.h
+y.o: /usr/include/openssl/pkcs7.h /usr/include/openssl/conf.h

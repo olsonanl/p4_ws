@@ -42,16 +42,85 @@ bool object_at_as_bool(const json::object &obj, const json::string &key,
 void WorkspaceService::method_ls(const JsonRpcRequest &req, JsonRpcResponse &resp,
 				 DispatchContext &dc, int &http_code)
 {
-    auto input = req.params().at(0).as_object();
-    auto paths = input.at("paths").as_array();
-    bool excludeDirectories = input.at("excludeDirectories").as_bool();
-    bool excludeObjects = input.at("excludeObjects").as_bool();
-    bool recursive = input.at("recursive").as_bool();
-    bool fullHierachicalOutput = input.at("fullHierachicalOutput").as_bool();
+    json::array paths;
+    bool excludeDirectories, excludeObjects, recursive, fullHierachicalOutput;
+
+    try {
+	auto input = req.params().at(0).as_object();
+	paths = input.at("paths").as_array();
+	excludeDirectories = object_at_as_bool(input, "excludeDirectories");
+	excludeObjects = object_at_as_bool(input, "excludeObjects");
+	recursive = object_at_as_bool(input, "recursive");
+	fullHierachicalOutput = object_at_as_bool(input, "fullHierachicalOutput");
+	
+	if (object_at_as_bool(input, "adminmode"))
+	    dc.admin_mode = config().user_is_admin(dc.token.user());
+    } catch (std::invalid_argument e) {
+	BOOST_LOG_SEV(lg_, wslog::debug) << "error parsing: " << e.what() << "\n";
+	resp.set_error(-32602, "Invalid request parameters");
+	http_code = 500;
+	return;
+    } catch (std::exception e) {
+	BOOST_LOG_SEV(lg_, wslog::debug) << "error parsing: " << e.what() << "\n";
+	resp.set_error(-32602, "Invalid request parameters");
+	http_code = 500;
+	return;
+    }
     
-    
+    // Validate format of paths before doing any work
     for (auto path: paths)
     {
+	BOOST_LOG_SEV(lg_, wslog::debug) << "check " <<path << "\n";
+	if (path.kind() != json::kind::string)
+	{
+	    resp.set_error(-32602, "Invalid request parameters");
+	    http_code = 500;
+	    return;
+	}
+    }
+
+    // We will run essentially this entire command in the
+    // database thread as the work is all database-based
+    
+    json::array output;
+    global_state_->db()->run_in_thread(dc,
+				       [this, &paths, &output, &dc,
+					excludeDirectories, excludeObjects, recursive, fullHierachicalOutput]
+				       (std::unique_ptr<WorkspaceDBQuery> qobj) 
+					   {
+		    // wslog::logger l(wslog::channel = "mongo_thread");
+					       process_ls(std::move(qobj), dc, paths, output,
+							  excludeDirectories, excludeObjects, recursive, fullHierachicalOutput);
+					   });
+    resp.result().emplace_back(output);
+    BOOST_LOG_SEV(lg_, wslog::debug) << output << "\n";
+}
+
+
+// This executes in a WorkspaceDB thread
+
+void WorkspaceService::process_ls(std::unique_ptr<WorkspaceDBQuery> qobj,
+				  DispatchContext &dc, json::array &paths, json::array &output,
+				  bool excludeDirectories, bool excludeObjects, bool recursive, bool fullHierachicalOutput)
+{
+    auto list_workspaces = [this](WSPath &path) {
+    };
+
+    
+    for (auto path_jobj: paths)
+    {
+	auto path_str = path_jobj.as_string();
+	WSPath path = qobj->parse_path(path_str);
+	std::cerr << path << "\n";
+
+	if (path.is_workspace_path())
+	{
+	    // list_workspaces();
+	}
+	else
+	{
+	    qobj->list_objects(path, excludeDirectories, excludeObjects, recursive);
+	}
     }
 }
 
@@ -67,11 +136,14 @@ void WorkspaceService::method_get(const JsonRpcRequest &req, JsonRpcResponse &re
 
 	metadata_only = object_at_as_bool(input, "metadata_only");
 	if (object_at_as_bool(input, "adminmode"))
-	{
 	    dc.admin_mode = config().user_is_admin(dc.token.user());
-	}
 
     } catch (std::invalid_argument e) {
+	BOOST_LOG_SEV(lg_, wslog::debug) << "error parsing: " << e.what() << "\n";
+	resp.set_error(-32602, "Invalid request parameters");
+	http_code = 500;
+	return;
+    } catch (std::exception e) {
 	BOOST_LOG_SEV(lg_, wslog::debug) << "error parsing: " << e.what() << "\n";
 	resp.set_error(-32602, "Invalid request parameters");
 	http_code = 500;
@@ -99,6 +171,7 @@ void WorkspaceService::method_get(const JsonRpcRequest &req, JsonRpcResponse &re
 	WSPath path;
 	ObjectMeta meta;
 
+	std::string file_data;
 	global_state_->db()->run_in_thread(dc,
 					   [&path, path_str = obj.as_string(),
 					    metadata_only, &meta]
@@ -110,13 +183,40 @@ void WorkspaceService::method_get(const JsonRpcRequest &req, JsonRpcResponse &re
 		    if (qobj->user_has_permission(path.workspace, WSPermission::read))
 		    {
 			meta = qobj->lookup_object_meta(path);
-			if (!metadata_only)
-			{
-			}
 		    }
 		});
+	// We do Shock manipulations back in the main thread of control
+	// so we can take advantage of the asynch support.
+
+	if (!metadata_only)
+	{
+	    if (meta.shockurl.empty())
+	    {
+		// We may want to move file I/O into a file I/O thread pool
+		std::string fs_path = filesystem_path_for_object(path);
+		std::cerr << "retrieve data from " << fs_path << "\n";
+		std::ifstream f(fs_path);
+		if (f)
+		{
+		    std::ostringstream ss;
+		    ss << f.rdbuf();
+		    file_data = std::move(ss.str());
+		}
+		else
+		{
+		    BOOST_LOG_SEV(lg_, wslog::error) << "cannot read WS file path " << fs_path << " from object " << path << "\n";
+		}
+	    }
+	    else
+	    {
+		std::cerr  << "invoke shock " << dc.token << "\n";
+		global_state_->shock().acl_add_user(meta.shockurl, dc.token, dc.yield);
+		std::cerr  << "invoke shock..done\n";
+	    }
+	}
+
 	BOOST_LOG_SEV(lg_, wslog::debug) << "parsed path " << path << "\n";
-	json::array obj_output( { meta.serialize(), "" });
+	json::array obj_output( { meta.serialize(), file_data });
 	output.emplace_back(obj_output);
     }
     resp.result().emplace_back(output);

@@ -25,12 +25,15 @@
 #include "DispatchContext.h"
 #include "AuthToken.h"
 #include "SigningCerts.h"
+#include "Shock.h"
+#include "RootCertificates.h"
 
 namespace beast = boost::beast;         // from <boost/beast.hpp>
 namespace http = beast::http;           // from <boost/beast/http.hpp>
 namespace net = boost::asio;            // from <boost/asio.hpp>
 using tcp = boost::asio::ip::tcp;       // from <boost/asio/ip/tcp.hpp>
 namespace json = boost::json;
+namespace ssl = boost::asio::ssl;       // from <boost/asio/ssl.hpp>
 
 // Report a failure
 static void
@@ -106,7 +109,13 @@ private:
 	    size_t n = buffer_.size() - body_remaining.size;
 	    
 	    // std::cerr << "Read: " << n << std::string(buffer_.data(), n);
-	    parser.write(static_cast<const char *>(buffer_.data()), n);
+	    try {
+		parser.write(static_cast<const char *>(buffer_.data()), n);
+	    } catch (std::exception e) {
+		BOOST_LOG_SEV(lg_, wslog::error) << "jsonrpc parse error " << e.what() << "\n";
+		return;
+	    }
+		
 	    if (ec && ec != http::error::need_buffer)
 	    {
 		fail(ec, "json parse");
@@ -370,12 +379,31 @@ int main(int argc, char *argv[])
 
     net::io_context ioc{threads};
 
-    // Create our global state container.
+    // SSL support
+    
+    ssl::context ssl_ctx{ssl::context::tlsv12_client};
+    std::ifstream certs("/etc/pki/tls/cert.pem");
+    if (!certs)
+    {
+	std::cerr << "cannot load certs file\n";
+	return 1;
+    }
+    boost::system::error_code ec;
+    load_root_certificates(certs, ssl_ctx, ec);
+    // Verify the remote server's certificate
+    ssl_ctx.set_verify_mode(ssl::verify_peer);
 
+    Shock shock(ioc, ssl_ctx);
+
+    // JSONRPC service dispatcher
     auto dispatcher = std::make_shared<ServiceDispatcher>();
+
+    // multithreaded Mongo database wrapper
     auto db = std::make_shared<WorkspaceDB>(ws_uri, std::max(1, threads - 1), db_name);
 
-    auto global_state = std::make_shared<WorkspaceState>(dispatcher, db);
+    // Create our global state container.
+    
+    auto global_state = std::make_shared<WorkspaceState>(dispatcher, db, std::move(shock));
 
     // Parse config
     if (!global_state->config().parse())
@@ -383,7 +411,7 @@ int main(int argc, char *argv[])
 	std::cerr << "Error parsing workspace configuration\n";
 	return 1;
     }
-    
+
     auto workspace_service = std::make_shared<WorkspaceService>(global_state);
 
 

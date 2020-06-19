@@ -10,7 +10,7 @@ class WorkspaceConfig
     : public ServiceConfig
 {
     std::set<std::string> admins_;
-    
+    std::string filesystem_base_;
 public:
     WorkspaceConfig()
 	: ServiceConfig("Workspace") {
@@ -26,7 +26,8 @@ public:
 
 	for (auto x: admins_)
 	    std::cerr << "admin: " << x << "\n";
-				 
+
+	filesystem_base_ = get_string("db-path");
        
 	return true;
     }
@@ -34,6 +35,7 @@ public:
     bool user_is_admin(const std::string &user) const {
 	return admins_.find(user) != admins_.end();
     }
+    const std::string filesystem_base() const { return filesystem_base_; }
 };
 
 
