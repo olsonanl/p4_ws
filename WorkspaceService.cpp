@@ -100,14 +100,20 @@ void WorkspaceService::method_get(const JsonRpcRequest &req, JsonRpcResponse &re
 	ObjectMeta meta;
 
 	global_state_->db()->run_in_thread(dc,
-					   [&path, path_str = obj.as_string(),  &meta]
+					   [&path, path_str = obj.as_string(),
+					    metadata_only, &meta]
 					   (std::unique_ptr<WorkspaceDBQuery> qobj) 
 		{
 		    // wslog::logger l(wslog::channel = "mongo_thread");
 		    
 		    path = qobj->parse_path(path_str);
 		    if (qobj->user_has_permission(path.workspace, WSPermission::read))
+		    {
 			meta = qobj->lookup_object_meta(path);
+			if (!metadata_only)
+			{
+			}
+		    }
 		});
 	BOOST_LOG_SEV(lg_, wslog::debug) << "parsed path " << path << "\n";
 	json::array obj_output( { meta.serialize(), "" });
