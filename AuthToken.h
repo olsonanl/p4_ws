@@ -19,7 +19,8 @@ private:
     std::map<std::string, std::string> parts_;
     std::string text_;
     std::vector<unsigned char> binary_signature_;
-
+    std::string token_;
+    
     bool valid_;
     
 public:
@@ -38,6 +39,7 @@ public:
     void clear() {
 	parts_.clear();
 	text_ = "";
+	token_.clear();
 	binary_signature_.clear();
 	valid_ = false;
     }
@@ -52,6 +54,7 @@ public:
     const std::string &signature() const { return parts_.at("sig"); }
     unsigned long expiry() const { return  std::stoul(parts_.at("expiry")); }
     const std::string &text() const { return text_; }
+    const std::string &token() const { return token_; }
     const std::vector<unsigned char> & binary_signature() const { return binary_signature_; }
     
     bool is_expired() const {
@@ -89,6 +92,7 @@ inline std::istream& operator>>(std::istream& is, AuthToken& tok)
 {
     try {
 	std::stringstream all;
+	std::stringstream tok_str;
 	bool first = true;
 	while (is)
 	{
@@ -96,8 +100,10 @@ inline std::istream& operator>>(std::istream& is, AuthToken& tok)
 	    std::stringstream sstr;
 	    if (!is.get(*sstr.rdbuf(), '='))
 		break;
+	    
 	    std::string k = std::move(sstr.str());
-
+	    tok_str << k;
+	    
 	    if (k != "sig")
 	    {
 		if (!first)
@@ -105,18 +111,25 @@ inline std::istream& operator>>(std::istream& is, AuthToken& tok)
 		first = false;
 		all << k;
 	    }
-	    if (is.get(c) && k != "sig")
-		all << c;
+	    if (is.get(c))
+	    {
+		tok_str << c;
+		if (k != "sig")
+		    all << c;
+	    }
 
 	    std::stringstream sstr2;
 	    if (!is.get(*sstr2.rdbuf(), '|'))
 		break;
 	    std::string v = std::move(sstr2.str());
+	    tok_str << v;
+	    
 	    if (v.back() == '\n')
 		v.pop_back();
 	    if (k != "sig")
 		all << v;
-	    is.get(c);
+	    if (is.get(c))
+		tok_str << c;
 
 	    if (k == "sig")
 	    {
@@ -133,6 +146,7 @@ inline std::istream& operator>>(std::istream& is, AuthToken& tok)
 	    tok.parts_.emplace(std::make_pair(k,v));
 	}
 	tok.text_ = std::move(all.str());
+	tok.token_ = std::move(tok_str.str());
 
 	// Ensure we have the fields we need.
 
