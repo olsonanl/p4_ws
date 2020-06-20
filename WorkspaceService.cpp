@@ -82,7 +82,7 @@ void WorkspaceService::method_ls(const JsonRpcRequest &req, JsonRpcResponse &res
     // We will run essentially this entire command in the
     // database thread as the work is all database-based
     
-    json::array output;
+    json::object output;
     global_state_->db()->run_in_thread(dc,
 				       [this, &paths, &output, &dc,
 					excludeDirectories, excludeObjects, recursive, fullHierachicalOutput]
@@ -100,7 +100,7 @@ void WorkspaceService::method_ls(const JsonRpcRequest &req, JsonRpcResponse &res
 // This executes in a WorkspaceDB thread
 
 void WorkspaceService::process_ls(std::unique_ptr<WorkspaceDBQuery> qobj,
-				  DispatchContext &dc, json::array &paths, json::array &output,
+				  DispatchContext &dc, json::array &paths, json::object &output,
 				  bool excludeDirectories, bool excludeObjects, bool recursive, bool fullHierachicalOutput)
 {
     auto list_workspaces = [this](WSPath &path) {
@@ -119,7 +119,12 @@ void WorkspaceService::process_ls(std::unique_ptr<WorkspaceDBQuery> qobj,
 	}
 	else
 	{
-	    qobj->list_objects(path, excludeDirectories, excludeObjects, recursive);
+	    std::vector<ObjectMeta> list = qobj->list_objects(path, excludeDirectories, excludeObjects, recursive);
+	    json::array jlist;
+	    for (auto elt: list)
+		jlist.emplace_back(elt.serialize());
+	    
+	    output.emplace(path_str, jlist);
 	}
     }
 }

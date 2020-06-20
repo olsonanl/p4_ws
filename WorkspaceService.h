@@ -238,7 +238,7 @@ private:
     void method_ls(const JsonRpcRequest &req, JsonRpcResponse &resp, DispatchContext &dc, int &http_code);
 
     void process_ls(std::unique_ptr<WorkspaceDBQuery> qobj,
-		    DispatchContext &dc, boost::json::array &paths, boost::json::array &output,
+		    DispatchContext &dc, boost::json::array &paths, boost::json::object &output,
 		    bool excludeDirectories, bool excludeObjects, bool recursive, bool fullHierachicalOutput);
 	
 };

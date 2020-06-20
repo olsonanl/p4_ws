@@ -50,7 +50,7 @@ public:
     WSPermission effective_permission(const WSWorkspace &w);
     bool user_has_permission(const WSWorkspace &w, WSPermission min_permission);
 
-    void list_objects(const WSPath &path, bool excludeDirectories, bool excludeObjects, bool recursive);
+    std::vector<ObjectMeta> list_objects(const WSPath &path, bool excludeDirectories, bool excludeObjects, bool recursive);
 
     ObjectMeta metadata_from_db(const WSWorkspace &ws, const bsoncxx::document::view &obj);
 

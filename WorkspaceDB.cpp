@@ -463,7 +463,7 @@ bool WorkspaceDBQuery::user_has_permission(const WSWorkspace &w, WSPermission mi
     return rank_user >= rank_needed;
 }
 
-void WorkspaceDBQuery::list_objects(const WSPath &path, bool excludeDirectories, bool excludeObjects, bool recursive)
+std::vector<ObjectMeta> WorkspaceDBQuery::list_objects(const WSPath &path, bool excludeDirectories, bool excludeObjects, bool recursive)
 {
     auto coll = (*client_)[db_->db_name()]["objects"];
 
@@ -487,12 +487,12 @@ void WorkspaceDBQuery::list_objects(const WSPath &path, bool excludeDirectories,
     auto cursor = coll.find(qry.view());
     BOOST_LOG_SEV(lg_, wslog::debug) << "qry: " << bsoncxx::to_json(qry.view()) << "\n";
 
+    std::vector<ObjectMeta> meta_list;
     for (auto ent = cursor.begin(); ent != cursor.end(); ent++)
     {
 	auto &obj = *ent;
-
-	ObjectMeta meta = metadata_from_db(path.workspace, obj);
-	BOOST_LOG_SEV(lg_, wslog::debug) << "obj: " << meta << "\n";
+	
+	meta_list.emplace_back(metadata_from_db(path.workspace, obj));
     }
-
+    return meta_list;
 }
