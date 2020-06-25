@@ -82,6 +82,16 @@ public:
 	: wslog::LoggerBase("ws")
 	, global_permission(WSPermission::none)
 	, creation_time({}) {}
+
+    void serialize_permissions(boost::json::array &obj) {
+
+	boost::json::array perm{"global_permission", to_string(global_permission) };
+	obj.emplace_back(perm);
+	for (auto elt: user_permission)
+	{
+	    obj.emplace_back(boost::json::array { elt.first, to_string(elt.second) });
+	}
+    }
 };
 
 class WSPath
@@ -251,10 +261,12 @@ private:
     void init_dispatch() {
 	method_map_.emplace(std::make_pair("ls",  Method { &WorkspaceService::method_ls, Authentication::optional }));
 	method_map_.emplace(std::make_pair("get", Method { &WorkspaceService::method_get, Authentication::optional }));
+	method_map_.emplace(std::make_pair("list_permissions", Method { &WorkspaceService::method_list_permissions, Authentication::optional }));
     }
 
     void method_get(const JsonRpcRequest &req, JsonRpcResponse &resp, DispatchContext &dc, int &http_code);
     void method_ls(const JsonRpcRequest &req, JsonRpcResponse &resp, DispatchContext &dc, int &http_code);
+    void method_list_permissions(const JsonRpcRequest &req, JsonRpcResponse &resp, DispatchContext &dc, int &http_code);
 
     void process_ls(std::unique_ptr<WorkspaceDBQuery> qobj,
 		    DispatchContext &dc, boost::json::array &paths, boost::json::object &output,

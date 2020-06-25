@@ -12,7 +12,16 @@ enum class WSPermission : char
 	admin = 'a',
 	public_ = 'p',
 	none = 'n',
+
 };
+
+inline std::string to_string(const WSPermission &p)
+{
+    char c[2];
+    c[0] = static_cast<char>(p);
+    c[1] = 0;
+    return std::string(c);
+}
 
 inline WSPermission to_permission(char c)
 {
