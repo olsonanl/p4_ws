@@ -1,4 +1,5 @@
 #include "WorkspaceDB.h"
+#include "PathParser.h"
 
 #include <mongocxx/collection.hpp>
 #include <mongocxx/database.hpp>
@@ -13,7 +14,9 @@
 #include <boost/regex.hpp>
 #include <boost/algorithm/string.hpp>
 
-#include <bsoncxx/builder/basic/array.hpp>
+#include <bsoncxx/builder/stream/array.hpp>
+#include <bsoncxx/builder/stream/document.hpp>
+
 #include <bsoncxx/builder/basic/document.hpp>
 #include <bsoncxx/builder/basic/kvp.hpp>
 #include <bsoncxx/types.hpp>
@@ -30,7 +33,45 @@ namespace builder = bsoncxx::builder;
 // URL decoder borrowed from Boost
 // boost_1_73_0/doc/html/boost_asio/example/cpp03/http/server4/file_handler.cpp
 //
-static bool url_decode(const std::string& in, std::string& out)
+
+inline std::string mongo_user_encode(const std::string& in)
+{
+    std::ostringstream os;
+    for (std::size_t i = 0; i < in.size(); ++i)
+    {
+	switch (in[i])
+	{
+	case '.':
+	    os << "%2E";
+	    break;
+	case '$':
+	    os << "%24";
+	    break;
+	default:
+	    os << in[i];
+	}
+    }
+    return std::move(os.str());
+}
+
+// NB this doesn't encode with the same case as the perl encoder
+// which has inserted the data mongo. to properly fix we will
+// need case insensitive matching on the permission names.
+inline bool url_encode(const std::string& in, std::string& out, std::string &chars)
+{
+    std::ostringstream os;
+    for (std::size_t i = 0; i < in.size(); ++i)
+    {
+	if (chars.find(in[i]) != std::string::npos)
+	    os << "%" << std::setfill('0') << std::setw(2) << std::hex << static_cast<int>(in[i]);
+	else
+	    os << in[i];
+    }
+    out = std::move(os.str());
+    return true;
+}
+
+inline bool url_decode(const std::string& in, std::string& out)
 {
     out.clear();
     out.reserve(in.size());
@@ -68,7 +109,6 @@ static bool url_decode(const std::string& in, std::string& out)
     }
     return true;
 }
-
 
 static std::string get_stringish(const bsoncxx::document::element &elt)
 {
@@ -213,7 +253,6 @@ ObjectMeta WorkspaceDBQuery::lookup_object_meta(const WSPath &o)
 {
     ObjectMeta meta;
 
-
     /*
      * If name is empty, return metadata for the workspace.
      * Otherwise return metadata for the object.
@@ -232,6 +271,7 @@ ObjectMeta WorkspaceDBQuery::lookup_object_meta(const WSPath &o)
 	meta.user_metadata = o.workspace.metadata;
 	meta.global_permission = o.workspace.global_permission;
 	meta.user_permission = effective_permission(o.workspace);
+	meta.valid = true;
     }
     else
     {
@@ -252,22 +292,8 @@ ObjectMeta WorkspaceDBQuery::lookup_object_meta(const WSPath &o)
 	    return meta;
 	}
 	auto &obj = *ent;
-
-	meta.name = get_string(obj, "name");
-	meta.type = get_string(obj, "type");
-	meta.path = "/" + o.workspace.owner + "/" + get_string(obj, "path");
-	meta.creation_time = get_tm(obj, "creation_date");
-	meta.id = get_string(obj, "uuid");
-	meta.owner = get_string(obj, "owner");
-	meta.size = get_int64(obj, "size");
-	meta.user_metadata = get_map(obj, "metadata");
-	meta.auto_metadata = get_map(obj, "autometadata");
-	meta.user_permission = effective_permission(o.workspace);
-	meta.global_permission = o.workspace.global_permission;
-	if (get_int64(obj, "shock"))
-	{
-	    meta.shockurl = get_string(obj, "shocknode");
-	}
+	
+	meta = metadata_from_db(o.workspace, obj);
     }
 
     return meta;
@@ -292,101 +318,97 @@ ObjectMeta WorkspaceDBQuery::metadata_from_db(const WSWorkspace &ws, const bsonc
     {
 	meta.shockurl = get_string(obj, "shocknode");
     }
+    meta.valid = true;
     return meta;
 }
 
-WSPath WorkspaceDBQuery::parse_path(const boost::json::string &pstr)
+void WorkspaceDBQuery::populate_workspace_from_db_obj(WSWorkspace &ws, const bsoncxx::document::view &obj)
+{
+    auto uuid = obj["uuid"];
+    auto cdate = obj["creation_date"];
+    auto perm = obj["global_permission"];
+    auto all_perms = get_perm_map(obj, "permissions");
+
+    ws.uuid = static_cast<std::string>(uuid.get_utf8().value);
+    ws.global_permission = to_permission(perm.get_utf8().value[0]);
+
+    if (ws.owner.empty())
+	ws.owner = static_cast<std::string>(obj["owner"].get_utf8().value);
+    if (ws.name.empty())
+	ws.name = static_cast<std::string>(obj["name"].get_utf8().value);
+
+    /* parse time. */
+
+    std::string creation_time(static_cast<std::string>(cdate.get_utf8().value));
+    std::istringstream ss(creation_time);
+    ss >> std::get_time(&ws.creation_time, "%Y-%m-%dT%H:%M:%SZ");
+    if (ss.fail())
+    {
+	BOOST_LOG_SEV(lg_, wslog::debug) << "creation date parse failed '" << creation_time << "'\n";
+    }
+
+    for (auto p: all_perms)
+    {
+	// Key here is the user id, url-encoded.
+	std::string user;
+	if (url_decode(p.first, user))
+	{
+	    ws.user_permission.insert(std::make_pair(user, p.second));
+	    // BOOST_LOG_SEV(lg_, wslog::debug) << user << ": " << p.second << "\n";
+	}
+    }
+}
+
+void WorkspaceDBQuery::populate_workspace_from_db(WSWorkspace &ws)
+{
+    auto coll = (*client_)[db_->db_name()]["workspaces"];
+    auto qry = builder::basic::document{};
+
+    qry.append(kvp("owner", ws.owner));
+    qry.append(kvp("name", ws.name));
+
+    // BOOST_LOG_SEV(lg_, wslog::debug) << "qry: " << bsoncxx::to_json(qry.view()) << "\n";
+
+    auto cursor = coll.find(qry.view());
+    auto ent = cursor.begin();
+
+    if (ent == cursor.end())
+	return;
+
+    auto &obj = *ent;
+
+    populate_workspace_from_db_obj(ws, obj);
+
+    BOOST_LOG_SEV(lg_, wslog::debug) << "obj: " << bsoncxx::to_json(obj) << "\n";
+
+    ent++;
+    if (ent != cursor.end())
+    {
+	BOOST_LOG_SEV(lg_, wslog::debug) << "nonunique workspace!\n";
+    }
+}
+
+WSPath WorkspaceDBQuery::parse_path(boost::json::string pstr)
 {
     BOOST_LOG_SEV(lg_, wslog::debug) << "validating " << pstr << "\n";
 
-    auto coll = (*client_)[db_->db_name()]["workspaces"];
-
-    auto qry = builder::basic::document{};
-
-    static const boost::regex username_path("/([^/]+)/([^/]+)(/(.*))?");
-    static const boost::regex uuid_path("[A-Fa-f0-9]{8}-[A-Fa-f0-9]{4}-[A-Fa-f0-9]{4}-[A-Fa-f0-9]{4}-[A-Fa-f0-9]{12}");
-
+    WSPathParser parser;
     WSPath path;
-    
-    boost::cmatch res;
-    if (boost::regex_match(pstr.begin(), pstr.end(), res, username_path))
+
+    if (parser.parse(pstr.c_str()))
     {
-	path.workspace.owner = std::move(res[1].str());
-	path.workspace.name = std::move(res[2].str());
+	path = parser.extract_path();
 
-	std::string file_path = std::move(res[4].str());
-
-	if (!file_path.empty() && file_path[file_path.size() - 1] == '/')
+	if (!path.workspace.owner.empty() && !path.workspace.name.empty())
 	{
-	    file_path.pop_back();
+	    populate_workspace_from_db(path.workspace);
 	}
-
-	// If path is empty, we had either /user/ws or /user/ws/ which are
-	// equivalent here and require no further parsing.
-	if (!file_path.empty())
-	{
-	    std::vector<std::string> comps;
-	    boost::algorithm::split(comps, file_path, boost::is_any_of("/"));
-	    path.name = std::move(comps.back());
-	    comps.pop_back();
-	    path.path = boost::algorithm::join(comps, "/");
-	}
-
-	qry.append(kvp("owner", path.workspace.owner));
-	qry.append(kvp("name", path.workspace.name));
-    
- 	// BOOST_LOG_SEV(lg_, wslog::debug) << "qry: " << bsoncxx::to_json(qry.view()) << "\n";
-
-	auto cursor = coll.find(qry.view());
-	auto ent = cursor.begin();
-
-	if (ent == cursor.end())
-	    return WSPath();
-
-	auto &obj = *ent;
-
-	BOOST_LOG_SEV(lg_, wslog::debug) << "obj: " << bsoncxx::to_json(obj) << "\n";
-
-	auto uuid = obj["uuid"];
-	auto cdate = obj["creation_date"];
-	auto perm = obj["global_permission"];
-	auto all_perms = get_perm_map(obj, "permissions");
-
-	ent++;
-	if (ent != cursor.end())
-	{
-	    BOOST_LOG_SEV(lg_, wslog::debug) << "nonunique workspace!\n";
-	}
-
-	path.workspace.uuid = static_cast<std::string>(uuid.get_utf8().value);
-	path.workspace.global_permission = to_permission(perm.get_utf8().value[0]);
-
-	/* parse time. */
-
-	std::string creation_time(static_cast<std::string>(cdate.get_utf8().value));
-	std::istringstream ss(creation_time);
-	ss >> std::get_time(&path.workspace.creation_time, "%Y-%m-%dT%H:%M:%SZ");
-	if (ss.fail())
-	{
-	    BOOST_LOG_SEV(lg_, wslog::debug) << "creation date parse failed '" << creation_time << "'\n";
-	}
-
-	for (auto p: all_perms)
-	{
-	    // Key here is the user id, url-encoded.
-	    std::string user;
-	    if (url_decode(p.first, user))
-	    {
-		path.workspace.user_permission.insert(std::make_pair(user, p.second));
-		// BOOST_LOG_SEV(lg_, wslog::debug) << user << ": " << p.second << "\n";
-	    }
-	}
+	path.empty = false;
     }
     else
     {
-	BOOST_LOG_SEV(lg_, wslog::debug) << "No match for " << pstr<< "\n";
+	BOOST_LOG_SEV(lg_, wslog::debug) << "Path parse failed for '" << pstr << "'\n";
     }
-    
     
     return path;
 }
@@ -494,5 +516,58 @@ std::vector<ObjectMeta> WorkspaceDBQuery::list_objects(const WSPath &path, bool 
 	
 	meta_list.emplace_back(metadata_from_db(path.workspace, obj));
     }
+    return meta_list;
+}
+
+/*
+ * list workspace query looks something like this
+ *  { $or : [ {"permissions.olson@patricbrc%2Eorg": { $exists : 1 } }, { "global_permission": { $ne: "n" }}, { "owner": "olson@patricbrc.org"}]}
+ */
+
+std::vector<ObjectMeta> WorkspaceDBQuery::list_workspaces(const std::string &owner)
+{
+    auto coll = (*client_)[db_->db_name()]["workspaces"];
+
+    std::vector<ObjectMeta> meta_list;
+
+    builder::stream::array terms;
+    builder::stream::document is_owner;
+
+    if (!owner.empty())
+    {
+	is_owner << "owner"
+		 << owner;
+    }
+
+    terms << builder::stream::open_document
+	  <<   (std::string("permissions.") + mongo_user_encode(token().user()))
+	  <<   builder::stream::open_document << "$exists" << bsoncxx::types::b_bool{true} << builder::stream::close_document
+	  << builder::stream::close_document
+	  << builder::stream::open_document
+	  <<   "owner"
+	  <<   token().user()
+	  << builder::stream::close_document 
+	  << builder::stream::open_document
+	  <<   "global_permission"
+	  <<   builder::stream::open_document << "$ne" << "n" << builder::stream::close_document
+	  << builder::stream::close_document;
+
+    builder::stream::document qry;
+
+    qry << "$or" << terms
+	<< builder::concatenate(is_owner.view());
+    
+    BOOST_LOG_SEV(lg_, wslog::debug) << "qry: " << bsoncxx::to_json(qry.view()) << "\n";
+    auto cursor = coll.find(qry.view());
+
+    for (auto ent = cursor.begin(); ent != cursor.end(); ent++)
+    {
+	auto &obj = *ent;
+
+	WSPath path;
+	populate_workspace_from_db_obj(path.workspace, obj);
+	meta_list.emplace_back(lookup_object_meta(path));
+    }
+
     return meta_list;
 }

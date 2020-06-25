@@ -22,7 +22,13 @@ public:
     void parse(boost::json::value &req, boost::system::error_code &ec) {
 	try {
 	    auto &obj = req.as_object();
-	    id_ = obj["id"].as_string();
+
+	    auto &id = obj["id"];
+	    if (id.kind() == boost::json::kind::int64)
+		id_ = std::to_string(id.as_int64());
+	    else if (id.kind() == boost::json::kind::string)
+		id_ = id.as_string();
+	    
 	    raw_method_ = obj["method"].as_string();
 	    params_ = obj["params"].as_array();
 
@@ -42,6 +48,7 @@ public:
 	}
 	catch (boost::json::type_error e) {
 	    std::cerr << "parse error " << e.what() << "\n";
+	    std::cerr << req << "\n";
 	    ec = WorkspaceErrc::InvalidJsonRpcRequest;
 	    return;
 	}

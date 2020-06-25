@@ -81,6 +81,36 @@ private:
 	}
     }
 
+    void handle_options(decltype(header_parser_)::value_type &req, net::yield_context yield) {
+
+	http::response<http::empty_body> http_resp;
+	http_resp.set(http::field::server, BOOST_BEAST_VERSION_STRING);
+	http_resp.set(http::field::content_type, "text/plain");
+
+	auto &org = req[http::field::origin];
+	if (!org.empty())
+	    http_resp.set(http::field::access_control_allow_origin, org);
+	auto &methods = req[http::field::access_control_request_method];
+	if (!methods.empty())
+	    http_resp.set(http::field::access_control_allow_methods, methods);
+	auto &hdrs = req[http::field::access_control_request_headers];
+	if (!hdrs.empty())
+	    http_resp.set(http::field::access_control_allow_headers, hdrs);
+	http_resp.set(http::field::access_control_max_age, "86400");
+	
+	http_resp.result(204);
+	
+	http_resp.prepare_payload();
+
+	boost::system::error_code ec;
+	http::async_write(stream_, http_resp, yield[ec]);
+	if (ec)
+	{
+	    fail(ec, "response write");
+	}
+	
+    }
+
     void handle_api(decltype(header_parser_)::value_type &req, net::yield_context yield) {
 	beast::error_code ec;
 	
@@ -164,6 +194,7 @@ private:
 	    http::response<http::string_body> http_resp;
 	    boost::json::string response_string = boost::json::to_string(response_value);
 	    http_resp.body() = std::string(response_string.data(), response_string.size());
+	    http_resp.set(http::field::access_control_allow_origin, "*");
 	    http_resp.set(http::field::server, BOOST_BEAST_VERSION_STRING);
 	    http_resp.set(http::field::content_type, "application/json");
 	    http_resp.keep_alive(message.keep_alive());
@@ -234,6 +265,13 @@ private:
 	if (req.method() == http::verb::get)
 	{
 	    handle_get(req, yield);
+	}
+	if (req.method() == http::verb::options)
+	{
+	    if (req.target() == state_->api_root())
+	    {
+		handle_options(req, yield);
+	    }
 	}
 	else if (req.method() == http::verb::post)
 	{

@@ -103,29 +103,45 @@ void WorkspaceService::process_ls(std::unique_ptr<WorkspaceDBQuery> qobj,
 				  DispatchContext &dc, json::array &paths, json::object &output,
 				  bool excludeDirectories, bool excludeObjects, bool recursive, bool fullHierachicalOutput)
 {
-    auto list_workspaces = [this](WSPath &path) {
-    };
-
-    
     for (auto path_jobj: paths)
     {
 	auto path_str = path_jobj.as_string();
 	WSPath path = qobj->parse_path(path_str);
 	std::cerr << path << "\n";
 
-	if (path.is_workspace_path())
+	std::vector<ObjectMeta> list;
+
+	if (!qobj->user_has_permission(path.workspace, WSPermission::read))
 	{
-	    // list_workspaces();
+	    continue;
+	}
+
+	if (path.empty)
+	{
+	    // Path did not parse. One reason is that it was a request for "/".
+	    if (path_str == "/")
+	    {
+		list = qobj->list_workspaces("");
+	    }
+	    else
+	    {
+		BOOST_LOG_SEV(lg_, wslog::notification) << "Path did not parse: " << path_str << "\n";
+		continue;
+	    }
+	}
+	else if (path.workspace.name.empty())
+	{
+	    list = qobj->list_workspaces(path.workspace.owner);
 	}
 	else
 	{
-	    std::vector<ObjectMeta> list = qobj->list_objects(path, excludeDirectories, excludeObjects, recursive);
-	    json::array jlist;
-	    for (auto elt: list)
-		jlist.emplace_back(elt.serialize());
-	    
-	    output.emplace(path_str, jlist);
+	    list = qobj->list_objects(path, excludeDirectories, excludeObjects, recursive);
 	}
+	json::array jlist;
+	for (auto elt: list)
+	    jlist.emplace_back(elt.serialize());
+	    
+	output.emplace(path_str, jlist);
     }
 }
 
@@ -157,8 +173,6 @@ void WorkspaceService::method_get(const JsonRpcRequest &req, JsonRpcResponse &re
 
     BOOST_LOG_SEV(lg_, wslog::debug) << "metadata_only=" << metadata_only << " adminmode=" << dc.admin_mode << "\n";
 
-    json::array output;
-
     // Validate format of paths before doing any work
     for (auto obj: objects)
     {
@@ -170,6 +184,8 @@ void WorkspaceService::method_get(const JsonRpcRequest &req, JsonRpcResponse &re
 	    return;
 	}
     }
+
+    json::array output;
 
     for (auto obj: objects)
     {
@@ -185,7 +201,8 @@ void WorkspaceService::method_get(const JsonRpcRequest &req, JsonRpcResponse &re
 		    // wslog::logger l(wslog::channel = "mongo_thread");
 		    
 		    path = qobj->parse_path(path_str);
-		    if (qobj->user_has_permission(path.workspace, WSPermission::read))
+		    if (path.workspace.name.empty() ||
+			qobj->user_has_permission(path.workspace, WSPermission::read))
 		    {
 			meta = qobj->lookup_object_meta(path);
 		    }
@@ -193,34 +210,38 @@ void WorkspaceService::method_get(const JsonRpcRequest &req, JsonRpcResponse &re
 	// We do Shock manipulations back in the main thread of control
 	// so we can take advantage of the asynch support.
 
-	if (!metadata_only)
+	std::cerr << "OM: " << meta << "\n";
+
+	if (meta.valid)
 	{
-	    if (meta.shockurl.empty())
+	    if (!metadata_only)
 	    {
-		// We may want to move file I/O into a file I/O thread pool
-		std::string fs_path = filesystem_path_for_object(path);
-		std::cerr << "retrieve data from " << fs_path << "\n";
-		std::ifstream f(fs_path);
-		if (f)
+		if (meta.shockurl.empty())
 		{
-		    std::ostringstream ss;
-		    ss << f.rdbuf();
-		    file_data = std::move(ss.str());
+		    // We may want to move file I/O into a file I/O thread pool
+		    std::string fs_path = filesystem_path_for_object(path);
+		    std::cerr << "retrieve data from " << fs_path << "\n";
+		    std::ifstream f(fs_path);
+		    if (f)
+		    {
+			std::ostringstream ss;
+			ss << f.rdbuf();
+			file_data = std::move(ss.str());
+		    }
+		    else
+		    {
+			BOOST_LOG_SEV(lg_, wslog::error) << "cannot read WS file path " << fs_path << " from object " << path << "\n";
+		    }
 		}
 		else
 		{
-		    BOOST_LOG_SEV(lg_, wslog::error) << "cannot read WS file path " << fs_path << " from object " << path << "\n";
+		    std::cerr  << "invoke shock " << dc.token << "\n";
+		    global_state_->shock().acl_add_user(meta.shockurl, dc.token, dc.yield);
+		    std::cerr  << "invoke shock..done\n";
 		}
 	    }
-	    else
-	    {
-		std::cerr  << "invoke shock " << dc.token << "\n";
-		global_state_->shock().acl_add_user(meta.shockurl, dc.token, dc.yield);
-		std::cerr  << "invoke shock..done\n";
-	    }
+	    
 	}
-
-	BOOST_LOG_SEV(lg_, wslog::debug) << "parsed path " << path << "\n";
 	json::array obj_output( { meta.serialize(), file_data });
 	output.emplace_back(obj_output);
     }

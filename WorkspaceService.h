@@ -80,6 +80,7 @@ public:
 
     WSWorkspace()
 	: wslog::LoggerBase("ws")
+	, global_permission(WSPermission::none)
 	, creation_time({}) {}
 };
 
@@ -87,9 +88,16 @@ class WSPath
 {
 public:
     WSWorkspace workspace;
+    // the path in a WSPath is canonicalized; no leading /, no trailing /, no internal
+    // multiple /. This is enforced by using the WSPathParser to create them from a string.
     std::string path;
     std::string name;
+    bool empty;
 
+    WSPath(): empty(true) {}
+    
+    // A workspace path is a path that does not have any user file component
+    // (path and name are both empty)
     bool is_workspace_path() const { return path == "" && name == ""; }
     inline std::string full_path() const {
 	std::string res = path;
@@ -115,17 +123,28 @@ public:
     WSPermission user_permission;
     WSPermission global_permission;
     std::string shockurl;
+    bool valid;
 
     ObjectMeta()
 	: size(0)
-	, creation_time({}) 
+	, creation_time({})
+	, user_permission(WSPermission::none)
+	, global_permission(WSPermission::none)
+	, valid(false)
 	{}
 
     boost::json::value serialize() {
-	return boost::json::array({name, type, path,
+	if (valid)
+	{
+	    return boost::json::array({name, type, path,
 		    creation_time, id, 
 		    owner, size,
 		    user_metadata, auto_metadata, user_permission, global_permission, shockurl });
+	}
+	else
+	{
+	    return boost::json::array({});
+	}
     }
 };
 

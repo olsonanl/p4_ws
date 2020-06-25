@@ -35,7 +35,7 @@ public:
 	, wslog::LoggerBase("wsdbq") {
     }
     ~WorkspaceDBQuery() { BOOST_LOG_SEV(lg_, wslog::debug) << "destroy WorkspaceDBQuery\n"; }
-    WSPath parse_path(const boost::json::string &p);
+    WSPath parse_path(boost::json::string p);
     ObjectMeta lookup_object_meta(const WSPath &path);
     const AuthToken &token() { return token_; }
     bool admin_mode() const { return admin_mode_; }
@@ -51,8 +51,12 @@ public:
     bool user_has_permission(const WSWorkspace &w, WSPermission min_permission);
 
     std::vector<ObjectMeta> list_objects(const WSPath &path, bool excludeDirectories, bool excludeObjects, bool recursive);
+    std::vector<ObjectMeta> list_workspaces(const std::string &owner);
 
-    ObjectMeta metadata_from_db(const WSWorkspace &ws, const bsoncxx::document::view &obj);
+    void populate_workspace_from_db(WSWorkspace &ws);
+    void populate_workspace_from_db_obj(WSWorkspace &ws, const bsoncxx::document::view &obj);
+
+    ObjectMeta metadata_from_db(const WSWorkspace &ws,  const bsoncxx::document::view &obj);
 
 };
 
