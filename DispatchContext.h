@@ -4,15 +4,17 @@
 #include <boost/asio/spawn.hpp>
 #include <boost/asio/deadline_timer.hpp>
 #include "AuthToken.h"
+#include "Logging.h"
 
 class DispatchContext
 {
 public:
-    DispatchContext(boost::asio::yield_context &y,  boost::asio::executor e, const AuthToken &t, bool admin_modex = false)
+    DispatchContext(boost::asio::yield_context &y,  boost::asio::executor e, const AuthToken &t, wslog::logger &logger)
 	: yield(y)
 	, timer(e)
 	, token(t)
-	, admin_mode(admin_modex)
+	, admin_mode(false)
+	, lg_(logger)
     {}
 
     
@@ -20,6 +22,7 @@ public:
     boost::asio::deadline_timer timer;
     AuthToken token;
     bool admin_mode;
+    wslog::logger &lg_;
 };
 
 

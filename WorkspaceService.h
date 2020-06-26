@@ -44,7 +44,7 @@ namespace boost {
 	{
 	    static void assign( value& jv, std::tm const& t ) {
 		std::ostringstream os;
-		os << std::put_time(&t, "%Y-%m-%d:%H:%M:%SZ");
+		os << std::put_time(&t, "%Y-%m-%dT%H:%M:%SZ");
 		jv = os.str();
 	    }
 	};
@@ -146,10 +146,16 @@ public:
     boost::json::value serialize() {
 	if (valid)
 	{
+	    boost::json::object am;
+	    for (auto x: auto_metadata) {
+		am.emplace(x.first, x.second);
+	    }
+	    am.emplace("is_folder", (type == "folder" || type == "modelfolder") ? 1 : 0);
+										   
 	    return boost::json::array({name, type, path,
 		    creation_time, id, 
 		    owner, size,
-		    user_metadata, auto_metadata, user_permission, global_permission, shockurl });
+		    user_metadata, am, user_permission, global_permission, shockurl });
 	}
 	else
 	{
@@ -239,6 +245,7 @@ public:
 	    }
 	}
 
+	BOOST_LOG_SEV(lg_, wslog::notification) << "Dispatch: " << req;
 	(this->*(method.method))(req, resp, dc, http_code);
     }
 
@@ -296,7 +303,7 @@ inline std::ostream &operator<<(std::ostream &os, const WSWorkspace &w)
 	   << ":" << iter->second;
 	iter++;
     }
-    os << "}," << std::put_time(&w.creation_time, "%Y-%m-%d:%H:%M:%SZ")
+    os << "}," << std::put_time(&w.creation_time, "%Y-%m-%dT%H:%M:%SZ")
        << ")";
     return os;
 }

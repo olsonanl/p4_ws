@@ -221,6 +221,7 @@ public:
 	    path.path += *iter;
 	    iter++;
 	}
+	path.empty = false;
 	return path;
     }
 

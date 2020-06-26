@@ -50,6 +50,11 @@ public:
 	ifstr >> *this;
     }
 
+    void parse(const std::string &s) {
+	std::stringstream ifstr(s);
+	ifstr >> *this;
+    }
+
     const std::string &user() const { return parts_.at("un"); }
     const std::string &signing_subject() const { return parts_.at("SigningSubject"); }
     const std::string &signature() const { return parts_.at("sig"); }

@@ -42,6 +42,14 @@ fail(beast::error_code ec, char const* what)
     std::cerr << what << ": " << ec.message() << "\n";
 }
 
+inline std::string name_logger(const std::string &base, const tcp::socket &sock)
+{
+    auto peer = sock.remote_endpoint();
+    std::ostringstream ostr;
+    ostr << base << ":" << peer;
+    return std::move(ostr.str());
+}
+
 /*
  * Session class. Read and process HTTP requests.
  */
@@ -63,7 +71,7 @@ public:
 		     std::shared_ptr<WorkspaceState> state)
 	: stream_(std::move(socket))
 	, state_{state}
-	, wslog::LoggerBase("session") {
+	, wslog::LoggerBase(name_logger("session", socket)) {
 	    header_parser_.body_limit(1000000);
     }
 
@@ -171,14 +179,16 @@ private:
 	    BOOST_LOG_SEV(lg_, wslog::debug) << "request: " << rpc_req << "\n";
 	    JsonRpcResponse rpc_resp(rpc_req);
 
-	    DispatchContext dc(yield, stream_.get_executor(), token_);
+
+	    wslog::logger disp_logger(wslog::channel = name_logger("dispatch", stream_.socket()));
+	    DispatchContext dc(yield, stream_.get_executor(), token_, disp_logger);
 
 	    int http_code = 200;
 	    state_->dispatcher()->dispatch(rpc_req, rpc_resp, dc, http_code);
-	    BOOST_LOG_SEV(lg_, wslog::debug) << "dispatch returned " << http_code << "\n";
 
 	    boost::json::value response_value = rpc_resp.full_response();
-	    std::cerr << "returning " << response_value << "\n";
+
+	    BOOST_LOG_SEV(lg_, wslog::debug) << "Req " << rpc_req << " had code " << http_code << " with response " << response_value << "\n";
 
 	    /*
 	     * Chunked responses will take some more thought.
@@ -197,7 +207,7 @@ private:
 	    http_resp.set(http::field::access_control_allow_origin, "*");
 	    http_resp.set(http::field::server, BOOST_BEAST_VERSION_STRING);
 	    http_resp.set(http::field::content_type, "application/json");
-	    http_resp.keep_alive(message.keep_alive());
+	    http_resp.set(http::field::connection, "close");
 	    http_resp.result(http_code);
 	    http_resp.prepare_payload();
 	    http::async_write(stream_, http_resp, yield[ec]);
@@ -205,6 +215,9 @@ private:
 	    {
 		fail(ec, "response write");
 	    }
+	    auto peer = stream_.socket().remote_endpoint(ec);
+	    BOOST_LOG_SEV(lg_, wslog::debug) << "Completed request from " << peer;
+	    stream_.close();
 	}
 	else
 	{
@@ -432,6 +445,7 @@ int main(int argc, char *argv[])
     ssl_ctx.set_verify_mode(ssl::verify_peer);
 
     Shock shock(ioc, ssl_ctx);
+    UserAgent user_agent(ioc, ssl_ctx);
 
     // JSONRPC service dispatcher
     auto dispatcher = std::make_shared<ServiceDispatcher>();
@@ -441,7 +455,7 @@ int main(int argc, char *argv[])
 
     // Create our global state container.
     
-    auto global_state = std::make_shared<WorkspaceState>(dispatcher, db, std::move(shock));
+    auto global_state = std::make_shared<WorkspaceState>(dispatcher, db, std::move(shock), std::move(user_agent));
 
     // Parse config
     if (!global_state->config().parse())
@@ -470,6 +484,13 @@ int main(int argc, char *argv[])
 							      global_state)](net::yield_context yield) {
 			   listener->run(yield);
 		       });
+
+    std::vector<std::thread> v;
+    v.reserve(threads - 1);
+    for (auto i = threads - 1; i > 0; --i)
+    {
+	v.emplace_back([&ioc] { ioc.run(); });
+    }
 
     ioc.run();
 

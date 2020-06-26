@@ -56,12 +56,12 @@ void WorkspaceService::method_ls(const JsonRpcRequest &req, JsonRpcResponse &res
 	if (object_at_as_bool(input, "adminmode"))
 	    dc.admin_mode = config().user_is_admin(dc.token.user());
     } catch (std::invalid_argument e) {
-	BOOST_LOG_SEV(lg_, wslog::debug) << "error parsing: " << e.what() << "\n";
+	BOOST_LOG_SEV(dc.lg_, wslog::debug) << "error parsing: " << e.what() << "\n";
 	resp.set_error(-32602, "Invalid request parameters");
 	http_code = 500;
 	return;
     } catch (std::exception e) {
-	BOOST_LOG_SEV(lg_, wslog::debug) << "error parsing: " << e.what() << "\n";
+	BOOST_LOG_SEV(dc.lg_, wslog::debug) << "error parsing: " << e.what() << "\n";
 	resp.set_error(-32602, "Invalid request parameters");
 	http_code = 500;
 	return;
@@ -70,7 +70,7 @@ void WorkspaceService::method_ls(const JsonRpcRequest &req, JsonRpcResponse &res
     // Validate format of paths before doing any work
     for (auto path: paths)
     {
-	BOOST_LOG_SEV(lg_, wslog::debug) << "check " <<path << "\n";
+	BOOST_LOG_SEV(dc.lg_, wslog::debug) << "check " <<path << "\n";
 	if (path.kind() != json::kind::string)
 	{
 	    resp.set_error(-32602, "Invalid request parameters");
@@ -93,7 +93,7 @@ void WorkspaceService::method_ls(const JsonRpcRequest &req, JsonRpcResponse &res
 							  excludeDirectories, excludeObjects, recursive, fullHierachicalOutput);
 					   });
     resp.result().emplace_back(output);
-    BOOST_LOG_SEV(lg_, wslog::debug) << output << "\n";
+    BOOST_LOG_SEV(dc.lg_, wslog::debug) << output << "\n";
 }
 
 
@@ -111,11 +111,6 @@ void WorkspaceService::process_ls(std::unique_ptr<WorkspaceDBQuery> qobj,
 
 	std::vector<ObjectMeta> list;
 
-	if (!qobj->user_has_permission(path.workspace, WSPermission::read))
-	{
-	    continue;
-	}
-
 	if (path.empty)
 	{
 	    // Path did not parse. One reason is that it was a request for "/".
@@ -125,7 +120,7 @@ void WorkspaceService::process_ls(std::unique_ptr<WorkspaceDBQuery> qobj,
 	    }
 	    else
 	    {
-		BOOST_LOG_SEV(lg_, wslog::notification) << "Path did not parse: " << path_str << "\n";
+		BOOST_LOG_SEV(dc.lg_, wslog::notification) << "Path did not parse: " << path_str << "\n";
 		continue;
 	    }
 	}
@@ -133,7 +128,7 @@ void WorkspaceService::process_ls(std::unique_ptr<WorkspaceDBQuery> qobj,
 	{
 	    list = qobj->list_workspaces(path.workspace.owner);
 	}
-	else
+	else if (qobj->user_has_permission(path.workspace, WSPermission::read))
 	{
 	    list = qobj->list_objects(path, excludeDirectories, excludeObjects, recursive);
 	}
@@ -160,23 +155,23 @@ void WorkspaceService::method_get(const JsonRpcRequest &req, JsonRpcResponse &re
 	    dc.admin_mode = config().user_is_admin(dc.token.user());
 
     } catch (std::invalid_argument e) {
-	BOOST_LOG_SEV(lg_, wslog::debug) << "error parsing: " << e.what() << "\n";
+	BOOST_LOG_SEV(dc.lg_, wslog::debug) << "error parsing: " << e.what() << "\n";
 	resp.set_error(-32602, "Invalid request parameters");
 	http_code = 500;
 	return;
     } catch (std::exception e) {
-	BOOST_LOG_SEV(lg_, wslog::debug) << "error parsing: " << e.what() << "\n";
+	BOOST_LOG_SEV(dc.lg_, wslog::debug) << "error parsing: " << e.what() << "\n";
 	resp.set_error(-32602, "Invalid request parameters");
 	http_code = 500;
 	return;
     }
 
-    BOOST_LOG_SEV(lg_, wslog::debug) << "metadata_only=" << metadata_only << " adminmode=" << dc.admin_mode << "\n";
+    BOOST_LOG_SEV(dc.lg_, wslog::debug) << "metadata_only=" << metadata_only << " adminmode=" << dc.admin_mode << "\n";
 
     // Validate format of paths before doing any work
     for (auto obj: objects)
     {
-	BOOST_LOG_SEV(lg_, wslog::debug) << "check " << obj << "\n";
+	BOOST_LOG_SEV(dc.lg_, wslog::debug) << "check " << obj << "\n";
 	if (obj.kind() != json::kind::string)
 	{
 	    resp.set_error(-32602, "Invalid request parameters");
@@ -230,13 +225,17 @@ void WorkspaceService::method_get(const JsonRpcRequest &req, JsonRpcResponse &re
 		    }
 		    else
 		    {
-			BOOST_LOG_SEV(lg_, wslog::error) << "cannot read WS file path " << fs_path << " from object " << path << "\n";
+			BOOST_LOG_SEV(dc.lg_, wslog::error) << "cannot read WS file path " << fs_path << " from object " << path << "\n";
 		    }
 		}
 		else
 		{
 		    std::cerr  << "invoke shock " << dc.token << "\n";
-		    global_state_->shock().acl_add_user(meta.shockurl, dc.token, dc.yield);
+
+		    // This token needs to be the shock data owner token
+		    AuthToken &token = global_state_->ws_auth(dc.yield);
+		    std::cerr << "got ws auth " << token << "\n";
+		    global_state_->shock().acl_add_user(meta.shockurl, token, dc.yield);
 		    std::cerr  << "invoke shock..done\n";
 		}
 	    }
@@ -246,7 +245,7 @@ void WorkspaceService::method_get(const JsonRpcRequest &req, JsonRpcResponse &re
 	output.emplace_back(obj_output);
     }
     resp.result().emplace_back(output);
-    BOOST_LOG_SEV(lg_, wslog::debug) << output << "\n";
+    BOOST_LOG_SEV(dc.lg_, wslog::debug) << output << "\n";
 }
 
 void WorkspaceService::method_list_permissions(const JsonRpcRequest &req, JsonRpcResponse &resp, DispatchContext &dc, int &http_code)
@@ -261,12 +260,12 @@ void WorkspaceService::method_list_permissions(const JsonRpcRequest &req, JsonRp
 	    dc.admin_mode = config().user_is_admin(dc.token.user());
 
     } catch (std::invalid_argument e) {
-	BOOST_LOG_SEV(lg_, wslog::debug) << "error parsing: " << e.what() << "\n";
+	BOOST_LOG_SEV(dc.lg_, wslog::debug) << "error parsing: " << e.what() << "\n";
 	resp.set_error(-32602, "Invalid request parameters");
 	http_code = 500;
 	return;
     } catch (std::exception e) {
-	BOOST_LOG_SEV(lg_, wslog::debug) << "error parsing: " << e.what() << "\n";
+	BOOST_LOG_SEV(dc.lg_, wslog::debug) << "error parsing: " << e.what() << "\n";
 	resp.set_error(-32602, "Invalid request parameters");
 	http_code = 500;
 	return;
@@ -275,7 +274,7 @@ void WorkspaceService::method_list_permissions(const JsonRpcRequest &req, JsonRp
     // Validate format of paths before doing any work
     for (auto obj: objects)
     {
-	BOOST_LOG_SEV(lg_, wslog::debug) << "check " << obj << "\n";
+	BOOST_LOG_SEV(dc.lg_, wslog::debug) << "check " << obj << "\n";
 	if (obj.kind() != json::kind::string)
 	{
 	    resp.set_error(-32602, "Invalid request parameters");
@@ -284,7 +283,7 @@ void WorkspaceService::method_list_permissions(const JsonRpcRequest &req, JsonRp
 	}
     }
 
-    json::array output;
+    json::object output;
 
     global_state_->db()->run_in_thread(dc,
 				       [objects, &output]
@@ -302,11 +301,10 @@ void WorkspaceService::method_list_permissions(const JsonRpcRequest &req, JsonRp
 		{
 		    path.workspace.serialize_permissions(perms);
 		}
-		obj_output.emplace(path_str, perms);
-		output.emplace_back(obj_output);
+		output.emplace(path_str, perms);
 	    }
 	});
 
     resp.result().emplace_back(output);
-    BOOST_LOG_SEV(lg_, wslog::debug) << output << "\n";
+    BOOST_LOG_SEV(dc.lg_, wslog::debug) << output << "\n";
 }

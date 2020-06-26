@@ -189,6 +189,11 @@ static long get_int64(const bsoncxx::document::view &doc, const std::string &key
     return v;
 }
 
+inline bool is_folder(const std::string &type)
+{
+    return type == "folder" || type == "modelfolder";
+}
+
 static std::tm get_tm(const bsoncxx::document::view &doc, const std::string &key)
 {
     std::tm v = {};
@@ -305,7 +310,7 @@ ObjectMeta WorkspaceDBQuery::metadata_from_db(const WSWorkspace &ws, const bsonc
     
     meta.name = get_string(obj, "name");
     meta.type = get_string(obj, "type");
-    meta.path = "/" + ws.owner + "/" + get_string(obj, "path");
+    meta.path = "/" + ws.owner + "/" + ws.name + "/" + get_string(obj, "path");
     meta.creation_time = get_tm(obj, "creation_date");
     meta.id = get_string(obj, "uuid");
     meta.owner = get_string(obj, "owner");
@@ -328,6 +333,8 @@ void WorkspaceDBQuery::populate_workspace_from_db_obj(WSWorkspace &ws, const bso
     auto cdate = obj["creation_date"];
     auto perm = obj["global_permission"];
     auto all_perms = get_perm_map(obj, "permissions");
+
+    BOOST_LOG_SEV(lg_, wslog::debug) << "populate "<< ws << "from obj " << bsoncxx::to_json(obj);
 
     ws.uuid = static_cast<std::string>(uuid.get_utf8().value);
     ws.global_permission = to_permission(perm.get_utf8().value[0]);
