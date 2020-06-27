@@ -13,6 +13,8 @@
 #include <boost/asio.hpp>
 #include <boost/regex.hpp>
 #include <boost/algorithm/string.hpp>
+#include <boost/lexical_cast.hpp>
+#include <boost/uuid/uuid_io.hpp>
 
 #include <bsoncxx/builder/stream/array.hpp>
 #include <bsoncxx/builder/stream/document.hpp>
@@ -215,6 +217,7 @@ WorkspaceDB::WorkspaceDB(const std::string &uri, int threads, const std::string 
     , thread_pool_(threads)
     , wslog::LoggerBase("wsdb")
 {
+#if 0
     /* howto. */
 
     mongocxx::pool::entry c = pool_.acquire();
@@ -233,7 +236,7 @@ WorkspaceDB::WorkspaceDB(const std::string &uri, int threads, const std::string 
     }
     for (auto i = 0; i < std::min(5LU, v.size()); i++)
 	std::cout << bsoncxx::to_json(v[i]) << "\n";
-   
+#endif   
 }
 
 //void WorkspaceDB::list_workspaces(std::shared_ptr<std::vector<
@@ -393,6 +396,14 @@ void WorkspaceDBQuery::populate_workspace_from_db(WSWorkspace &ws)
     {
 	BOOST_LOG_SEV(lg_, wslog::debug) << "nonunique workspace!\n";
     }
+}
+
+WSPath WorkspaceDBQuery::parse_path(boost::json::value pstr)
+{
+    if (pstr.kind() == boost::json::kind::string)
+	return parse_path(pstr.as_string());
+    else
+	return WSPath();
 }
 
 WSPath WorkspaceDBQuery::parse_path(boost::json::string pstr)
@@ -577,4 +588,44 @@ std::vector<ObjectMeta> WorkspaceDBQuery::list_workspaces(const std::string &own
     }
 
     return meta_list;
+}
+
+std::string WorkspaceDBQuery::insert_download_for_object(const boost::json::string &path_str, const AuthToken &ws_token)
+{
+    WSPath path = parse_path(path_str);
+    ObjectMeta meta = lookup_object_meta(path);
+    if (!(meta.is_object() && user_has_permission(path.workspace, WSPermission::read)))
+    {
+	return "";
+    }
+    
+    boost::uuids::uuid uuid = (*(db_->uuidgen()))();
+    std::string key = boost::lexical_cast<std::string>(uuid);
+
+    builder::stream::document qry;
+
+    std::time_t expires = time(0) + db_->global_state()->config().download_lifetime();
+    
+    qry << "workspace_path" << path_str.c_str()
+	<< "download_key" << key
+	<< "expiration_time" << expires
+	<< "name" << meta.name
+	<< "size" << static_cast<std::int64_t>(meta.size);
+    
+    if (meta.shockurl.empty())
+    {
+	qry << "file_path" << db_->global_state()->config().filesystem_path_for_object(path);
+    }
+    else
+    {
+	qry << "shock_node" << meta.shockurl;
+
+	if (token().valid())
+	    qry << "token" << token().token();
+	else
+	    qry << "token" << ws_token.token();
+    }
+    BOOST_LOG_SEV(lg_, wslog::debug) << "QRY: " << bsoncxx::to_json(qry.view());
+
+    return key;
 }

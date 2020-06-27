@@ -143,6 +143,9 @@ public:
 	, valid(false)
 	{}
 
+    bool is_object() const {
+	return valid && !name.empty() && type != "folder" && type != "modelfolder";
+    }
     boost::json::value serialize() {
 	if (valid)
 	{
@@ -250,18 +253,6 @@ public:
     }
 
     inline const WorkspaceConfig &config() const { return global_state_->config(); }
-    inline std::string filesystem_path_for_object(const WSPath &obj) {
-	std::string res = config().filesystem_base();
-	res += "/P3WSDB/";
-	res += obj.workspace.owner;
-	res += "/";
-	res += obj.workspace.name;
-	res += "/";
-	res += obj.path;
-	res += "/";
-	res += obj.name;
-	return res;
-    }
     
     
 private:
@@ -269,11 +260,13 @@ private:
 	method_map_.emplace(std::make_pair("ls",  Method { &WorkspaceService::method_ls, Authentication::optional }));
 	method_map_.emplace(std::make_pair("get", Method { &WorkspaceService::method_get, Authentication::optional }));
 	method_map_.emplace(std::make_pair("list_permissions", Method { &WorkspaceService::method_list_permissions, Authentication::optional }));
+	method_map_.emplace(std::make_pair("get_download_url", Method { &WorkspaceService::method_get_download_url, Authentication::optional }));
     }
 
     void method_get(const JsonRpcRequest &req, JsonRpcResponse &resp, DispatchContext &dc, int &http_code);
     void method_ls(const JsonRpcRequest &req, JsonRpcResponse &resp, DispatchContext &dc, int &http_code);
     void method_list_permissions(const JsonRpcRequest &req, JsonRpcResponse &resp, DispatchContext &dc, int &http_code);
+    void method_get_download_url(const JsonRpcRequest &req, JsonRpcResponse &resp, DispatchContext &dc, int &http_code);
 
     void process_ls(std::unique_ptr<WorkspaceDBQuery> qobj,
 		    DispatchContext &dc, boost::json::array &paths, boost::json::object &output,

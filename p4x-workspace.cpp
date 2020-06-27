@@ -456,6 +456,7 @@ int main(int argc, char *argv[])
     // Create our global state container.
     
     auto global_state = std::make_shared<WorkspaceState>(dispatcher, db, std::move(shock), std::move(user_agent));
+    db->global_state(global_state);
 
     // Parse config
     if (!global_state->config().parse())

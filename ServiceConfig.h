@@ -26,6 +26,9 @@ public:
     std::string get_string(const std::string &key, const std::string &default_value = "") const {
 	return parser_->Get(service_name_, key, default_value);
     }
+    long get_long(const std::string &key, long default_value = 0L) const {
+	return parser_->GetInteger(service_name_, key, default_value);
+    }
 
     void config_file(const std::string &f) { config_file_ = f; }
     void service_name(const std::string &s) { service_name_ = s; }

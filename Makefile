@@ -94,7 +94,7 @@ deploy-service:
 
 binaries: $(TOP_DIR)/bin/p4x-workspace
 
-p4x-workspace: p4x-workspace.o WorkspaceDB.o WorkspaceService.o Logging.o ServiceConfig.o Shock.o UserAgent.o
+p4x-workspace: p4x-workspace.o WorkspaceDB.o WorkspaceService.o Logging.o ServiceConfig.o Shock.o UserAgent.o WorkspaceConfig.o
 	PATH=$(BUILD_TOOLS)/bin:$$PATH $(CXX) $(CXX_DEFINES) -g -o $@ $^ $(CXXFLAGS) $(LDFLAGS) $(CXX_LDFLAGS) $(LIBS) -lssl -lcrypto
 
 $(TOP_DIR)/bin/%: %

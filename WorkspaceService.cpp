@@ -1,5 +1,6 @@
 #include "WorkspaceService.h"
 #include "WorkspaceDB.h"
+#include "WorkspaceConfig.h"
 
 #include <boost/regex.hpp>
 #include <boost/asio/error.hpp>
@@ -214,7 +215,7 @@ void WorkspaceService::method_get(const JsonRpcRequest &req, JsonRpcResponse &re
 		if (meta.shockurl.empty())
 		{
 		    // We may want to move file I/O into a file I/O thread pool
-		    std::string fs_path = filesystem_path_for_object(path);
+		    std::string fs_path = global_state_->config().filesystem_path_for_object(path);
 		    std::cerr << "retrieve data from " << fs_path << "\n";
 		    std::ifstream f(fs_path);
 		    if (f)
@@ -308,3 +309,65 @@ void WorkspaceService::method_list_permissions(const JsonRpcRequest &req, JsonRp
     resp.result().emplace_back(output);
     BOOST_LOG_SEV(dc.lg_, wslog::debug) << output << "\n";
 }
+
+void WorkspaceService::method_get_download_url(const JsonRpcRequest &req, JsonRpcResponse &resp,
+				  DispatchContext &dc, int &http_code)
+{
+    json::array objects;
+
+    try {
+	auto input = req.params().at(0).as_object();
+	objects = input.at("objects").as_array();
+    } catch (std::invalid_argument e) {
+	BOOST_LOG_SEV(dc.lg_, wslog::debug) << "error parsing: " << e.what() << "\n";
+	resp.set_error(-32602, "Invalid request parameters");
+	http_code = 500;
+	return;
+    } catch (std::exception e) {
+	BOOST_LOG_SEV(dc.lg_, wslog::debug) << "error parsing: " << e.what() << "\n";
+	resp.set_error(-32602, "Invalid request parameters");
+	http_code = 500;
+	return;
+    }
+
+    // Validate format of paths before doing any work
+    for (auto obj: objects)
+    {
+	BOOST_LOG_SEV(dc.lg_, wslog::debug) << "check " << obj << "\n";
+	if (obj.kind() != json::kind::string)
+	{
+	    resp.set_error(-32602, "Invalid request parameters");
+	    http_code = 500;
+	    return;
+	}
+    }
+
+    json::array output;
+
+    /*
+     * For each object, validate the path and ensure it points to a file
+     * and not a folder. Then create the unique download ID and register with the
+     * database.
+     */
+
+    AuthToken &ws_auth = global_state_->ws_auth(dc.yield);
+
+    
+    auto work = [&dc, &objects, &output, &ws_auth, this] (std::unique_ptr<WorkspaceDBQuery> qobj)
+	{
+	    //
+	    // We're building a list of documents to insert into the mongodb.
+	    //
+	    for (auto obj: objects)
+	    {
+		auto path_str = obj.as_string();
+		std::string key = qobj->insert_download_for_object(path_str, ws_auth);
+	    }
+	};
+
+    global_state_->db()->run_in_thread(dc, work);
+
+    resp.result().emplace_back(output);
+    BOOST_LOG_SEV(dc.lg_, wslog::debug) << output << "\n";
+}
+

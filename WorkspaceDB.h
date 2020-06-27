@@ -11,6 +11,9 @@
 #include <boost/asio/thread_pool.hpp>
 #include <boost/asio/deadline_timer.hpp>
 #include <boost/asio/post.hpp>
+#include <boost/thread/tss.hpp>
+#include <boost/uuid/uuid.hpp>
+#include <boost/uuid/uuid_generators.hpp>
 
 #include "WorkspaceService.h"
 #include "WorkspaceTypes.h"
@@ -26,6 +29,7 @@ private:
     bool admin_mode_;
     mongocxx::pool::entry  client_;
     std::shared_ptr<WorkspaceDB> db_;
+
 public:
     WorkspaceDBQuery(const AuthToken &token, bool admin_mode, mongocxx::pool::entry p, std::shared_ptr<WorkspaceDB> db)
 	: token_(token)
@@ -35,6 +39,7 @@ public:
 	, wslog::LoggerBase("wsdbq") {
     }
     ~WorkspaceDBQuery() { BOOST_LOG_SEV(lg_, wslog::debug) << "destroy WorkspaceDBQuery\n"; }
+    WSPath parse_path(boost::json::value p);
     WSPath parse_path(boost::json::string p);
     ObjectMeta lookup_object_meta(const WSPath &path);
     const AuthToken &token() { return token_; }
@@ -58,7 +63,13 @@ public:
 
     ObjectMeta metadata_from_db(const WSWorkspace &ws,  const bsoncxx::document::view &obj);
 
+    /*
+     * Downlaod support.
+     */
+    std::string insert_download_for_object(const boost::json::string &path_str, const AuthToken &ws_token);
 };
+
+class WorkspaceState;
 
 class WorkspaceDB
     : public wslog::LoggerBase
@@ -70,7 +81,9 @@ class WorkspaceDB
     mongocxx::instance instance_;
 
     boost::asio::thread_pool thread_pool_;
+    std::weak_ptr<WorkspaceState> global_state_;
 
+    boost::thread_specific_ptr<boost::uuids::random_generator> uuidgen_;
 public:
     WorkspaceDB(const std::string &uri, int threads, const std::string &db_name);
 
@@ -98,7 +111,19 @@ public:
 
     }
 
+    std::shared_ptr<WorkspaceState> global_state() { return global_state_.lock(); }
+    void global_state(std::shared_ptr<WorkspaceState> g) { global_state_ = g; }
 
+    boost::uuids::random_generator *uuidgen() {
+	auto gen = uuidgen_.get();
+	if (gen == 0)
+	{
+	    gen = new boost::uuids::random_generator();
+	    std::cerr << "creating new uuidgen " << gen << "\n";
+	    uuidgen_.reset(gen);
+	}
+	return gen;
+    }
 };
 
 
