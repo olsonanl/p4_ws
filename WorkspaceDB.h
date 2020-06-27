@@ -64,7 +64,7 @@ public:
     ObjectMeta metadata_from_db(const WSWorkspace &ws,  const bsoncxx::document::view &obj);
 
     /*
-     * Downlaod support.
+     * Download support.
      */
     std::string insert_download_for_object(const boost::json::string &path_str, const AuthToken &ws_token);
 };
