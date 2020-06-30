@@ -1,10 +1,7 @@
 #include "WorkspaceService.h"
 #include "WorkspaceDB.h"
 #include "WorkspaceConfig.h"
-
-#include <boost/regex.hpp>
-#include <boost/asio/error.hpp>
-#include <boost/asio/post.hpp>
+#include "WorkspaceState.h"
 
 namespace json = boost::json;
 
@@ -40,6 +37,55 @@ bool object_at_as_bool(const json::object &obj, const json::string &key,
     }
 }
 
+void WorkspaceService::dispatch(const JsonRpcRequest &req, JsonRpcResponse &resp,
+				DispatchContext &dc, int &http_code)
+{
+    BOOST_LOG_SEV(lg_, wslog::debug) << "ws dispatching " << req << "\n";
+    auto x = method_map_.find(req.method());
+    if (x == method_map_.end())
+    {
+	http_code = 500;
+	resp.set_error(-32601, "Method not found");
+	return;
+    }
+    Method &method = x->second;
+    
+    /*
+     * Manage auth.
+     * If auth required or optional, attempt to verify token.
+     * If auth not required, clear the token.
+     */
+    if (method.auth == Authentication::none)
+    {
+	dc.token.clear();
+    }
+    else
+    {
+	// Authentication is optional or required. Validate token.
+	// If it does not validate, clear it.
+	bool valid;
+	try {
+	    valid = shared_state_.validate_certificate(dc.token);
+	} catch (std::exception e) {
+	    BOOST_LOG_SEV(lg_, wslog::error) << "exception validating token: " << e.what() << "\n";
+	    valid = false;
+	}
+	if (!valid)
+	    dc.token.clear();
+	
+	if (method.auth == Authentication::required && !valid)
+	{
+	    // Fail
+	    resp.set_error(503, "Authentication failed");
+	    http_code = 403;
+	    return;
+	}
+    }
+    
+    BOOST_LOG_SEV(lg_, wslog::notification) << "Dispatch: " << req;
+    (this->*(method.method))(req, resp, dc, http_code);
+}
+
 void WorkspaceService::method_ls(const JsonRpcRequest &req, JsonRpcResponse &resp,
 				 DispatchContext &dc, int &http_code)
 {
@@ -55,7 +101,7 @@ void WorkspaceService::method_ls(const JsonRpcRequest &req, JsonRpcResponse &res
 	fullHierachicalOutput = object_at_as_bool(input, "fullHierachicalOutput");
 	
 	if (object_at_as_bool(input, "adminmode"))
-	    dc.admin_mode = config().user_is_admin(dc.token.user());
+	    dc.admin_mode = shared_state_.config().user_is_admin(dc.token.user());
     } catch (std::invalid_argument e) {
 	BOOST_LOG_SEV(dc.lg_, wslog::debug) << "error parsing: " << e.what() << "\n";
 	resp.set_error(-32602, "Invalid request parameters");
@@ -84,15 +130,15 @@ void WorkspaceService::method_ls(const JsonRpcRequest &req, JsonRpcResponse &res
     // database thread as the work is all database-based
     
     json::object output;
-    global_state_->db().run_in_thread(dc,
-				       [this, &paths, &output, &dc,
-					excludeDirectories, excludeObjects, recursive, fullHierachicalOutput]
-				       (std::unique_ptr<WorkspaceDBQuery> qobj) 
-					   {
-		    // wslog::logger l(wslog::channel = "mongo_thread");
-					       process_ls(std::move(qobj), dc, paths, output,
-							  excludeDirectories, excludeObjects, recursive, fullHierachicalOutput);
-					   });
+    db_.run_in_thread(dc,
+		      [this, &paths, &output, &dc,
+		       excludeDirectories, excludeObjects, recursive, fullHierachicalOutput]
+		      (std::unique_ptr<WorkspaceDBQuery> qobj) 
+			  {
+			      // wslog::logger l(wslog::channel = "mongo_thread");
+			      process_ls(std::move(qobj), dc, paths, output,
+					 excludeDirectories, excludeObjects, recursive, fullHierachicalOutput);
+			  });
     resp.result().emplace_back(output);
     BOOST_LOG_SEV(dc.lg_, wslog::debug) << output << "\n";
 }
@@ -153,7 +199,7 @@ void WorkspaceService::method_get(const JsonRpcRequest &req, JsonRpcResponse &re
 
 	metadata_only = object_at_as_bool(input, "metadata_only");
 	if (object_at_as_bool(input, "adminmode"))
-	    dc.admin_mode = config().user_is_admin(dc.token.user());
+	    dc.admin_mode = shared_state_.config().user_is_admin(dc.token.user());
 
     } catch (std::invalid_argument e) {
 	BOOST_LOG_SEV(dc.lg_, wslog::debug) << "error parsing: " << e.what() << "\n";
@@ -189,20 +235,20 @@ void WorkspaceService::method_get(const JsonRpcRequest &req, JsonRpcResponse &re
 	ObjectMeta meta;
 
 	std::string file_data;
-	global_state_->db().run_in_thread(dc,
-					   [&path, path_str = obj.as_string(),
-					    metadata_only, &meta]
-					   (std::unique_ptr<WorkspaceDBQuery> qobj) 
-		{
-		    // wslog::logger l(wslog::channel = "mongo_thread");
-		    
-		    path = qobj->parse_path(path_str);
-		    if (path.workspace.name.empty() ||
-			qobj->user_has_permission(path.workspace, WSPermission::read))
-		    {
-			meta = qobj->lookup_object_meta(path);
-		    }
-		});
+	db_.run_in_thread(dc,
+			  [&path, path_str = obj.as_string(),
+			   metadata_only, &meta]
+			  (std::unique_ptr<WorkspaceDBQuery> qobj) 
+			      {
+				  // wslog::logger l(wslog::channel = "mongo_thread");
+				  
+				  path = qobj->parse_path(path_str);
+				  if (path.workspace.name.empty() ||
+				      qobj->user_has_permission(path.workspace, WSPermission::read))
+				  {
+				      meta = qobj->lookup_object_meta(path);
+				  }
+			      });
 	// We do Shock manipulations back in the main thread of control
 	// so we can take advantage of the asynch support.
 
@@ -215,7 +261,7 @@ void WorkspaceService::method_get(const JsonRpcRequest &req, JsonRpcResponse &re
 		if (meta.shockurl.empty())
 		{
 		    // We may want to move file I/O into a file I/O thread pool
-		    std::string fs_path = global_state_->config().filesystem_path_for_object(path);
+		    const std::string &fs_path = shared_state_.config().filesystem_path_for_object(path);
 		    std::cerr << "retrieve data from " << fs_path << "\n";
 		    std::ifstream f(fs_path);
 		    if (f)
@@ -234,9 +280,9 @@ void WorkspaceService::method_get(const JsonRpcRequest &req, JsonRpcResponse &re
 		    std::cerr  << "invoke shock " << dc.token << "\n";
 
 		    // This token needs to be the shock data owner token
-		    AuthToken &token = global_state_->ws_auth(dc.yield);
+		    AuthToken &token = shared_state_.ws_auth(dc.yield);
 		    std::cerr << "got ws auth " << token << "\n";
-		    global_state_->shock().acl_add_user(meta.shockurl, token, dc.yield);
+		    shared_state_.shock().acl_add_user(meta.shockurl, token, dc.yield);
 		    std::cerr  << "invoke shock..done\n";
 		}
 	    }
@@ -258,7 +304,7 @@ void WorkspaceService::method_list_permissions(const JsonRpcRequest &req, JsonRp
 	objects = input.at("objects").as_array();
 
 	if (object_at_as_bool(input, "adminmode"))
-	    dc.admin_mode = config().user_is_admin(dc.token.user());
+	    dc.admin_mode = shared_state_.config().user_is_admin(dc.token.user());
 
     } catch (std::invalid_argument e) {
 	BOOST_LOG_SEV(dc.lg_, wslog::debug) << "error parsing: " << e.what() << "\n";
@@ -286,9 +332,9 @@ void WorkspaceService::method_list_permissions(const JsonRpcRequest &req, JsonRp
 
     json::object output;
 
-    global_state_->db().run_in_thread(dc,
-				       [objects, &output]
-				       (std::unique_ptr<WorkspaceDBQuery> qobj) 
+    db_.run_in_thread(dc,
+		      [objects, &output]
+		      (std::unique_ptr<WorkspaceDBQuery> qobj) 
        	{
 	    for (auto obj: objects)
 	    {
@@ -355,7 +401,7 @@ void WorkspaceService::method_get_download_url(const JsonRpcRequest &req, JsonRp
      * current user had a valid token; only then do we add the Shock url to the list.
      */
 
-    AuthToken &ws_auth = global_state_->ws_auth(dc.yield);
+    AuthToken &ws_auth = shared_state_.ws_auth(dc.yield);
     std::vector<std::string> shock_urls;
     
     auto work = [&dc, &objects, &output, &ws_auth, &shock_urls, this] (std::unique_ptr<WorkspaceDBQuery> qobj)
@@ -373,17 +419,17 @@ void WorkspaceService::method_get_download_url(const JsonRpcRequest &req, JsonRp
 		{
 		    std::string encoded_name;
 		    url_encode(meta.name, encoded_name);
-		    output.emplace_back(config().download_url_base() + "/" + key + "/" + encoded_name);
+		    output.emplace_back(shared_state_.config().download_url_base() + "/" + key + "/" + encoded_name);
 		}
 		    
 	    }
 	};
 
-    global_state_->db().run_in_thread(dc, work);
+    db_.run_in_thread(dc, work);
 
     for (auto url: shock_urls)
     {
-	global_state_->shock().acl_add_user(url, dc.token, dc.yield);
+	shared_state_.shock().acl_add_user(url, dc.token, dc.yield);
     }
 
     resp.result().emplace_back(output);

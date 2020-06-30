@@ -224,6 +224,55 @@ namespace boost {
 
     }
 }
+inline std::ostream &operator<<(std::ostream &os, const WSWorkspace &w)
+{
+    os << "WSWorkspace("
+       << w.name
+       << "," << w.owner
+       << "," << w.uuid
+       << "," << w.global_permission
+       << ",{";
+    auto iter = w.user_permission.begin();
+    if (iter != w.user_permission.end())
+    {
+	os << iter->first
+	   << ":" << iter->second;
+	++iter;
+    }
+    while (iter != w.user_permission.end())
+    {
+	os << ","
+	   << iter->first
+	   << ":" << iter->second;
+	iter++;
+    }
+    os << "}," << std::put_time(&w.creation_time, "%Y-%m-%dT%H:%M:%SZ")
+       << ")";
+    return os;
+}
+
+inline std::ostream &operator<<(std::ostream &os, const WSPath &p)
+{
+    os << "WSPath("
+       << p.workspace
+       << "," << p.path
+       << "," << p.name
+       << ")";
+    return os;
+}
+
+inline std::ostream &operator<<(std::ostream &os, const ObjectMeta &m)
+{
+    os << "ObjectMeta("
+       << m.name
+       << "," << m.type
+       << "," << m.path
+       << "," << m.id
+       << "," << m.owner
+       << "," << m.shockurl
+       << ")";
+    return  os;
+}
 
 
 #endif

@@ -1,5 +1,8 @@
 #include "WorkspaceDB.h"
 #include "PathParser.h"
+#include "parse_url.h"
+#include "WorkspaceConfig.h"
+#include "WorkspaceTypes.h"
 
 #include <mongocxx/collection.hpp>
 #include <mongocxx/database.hpp>
@@ -74,11 +77,15 @@ static std::string get_stringish(const bsoncxx::document::element &elt)
 
 static std::string get_string(const bsoncxx::document::view &doc, const std::string &key)
 {
-    auto val = doc[key];
     std::string v;
-    if (val.type() == bsoncxx::type::k_utf8)
+    auto iter = doc.find(key);
+    if (iter != doc.end())
     {
-	v = static_cast<std::string>(val.get_utf8().value);
+	auto val = *iter;
+	if (val.type() == bsoncxx::type::k_utf8)
+	{
+	    v = static_cast<std::string>(val.get_utf8().value);
+	}
     }
     return v;
 
@@ -560,7 +567,7 @@ std::string WorkspaceDBQuery::insert_download_for_object(const boost::json::stri
     builder::stream::document qry;
     auto coll = (*client_)[db_.db_name()]["downloads"];
 
-    std::time_t expires = time(0) + db_.global_state()->config().download_lifetime();
+    std::time_t expires = time(0) + db_.config().download_lifetime();
     
     qry << "workspace_path" << path_str.c_str()
 	<< "download_key" << key
@@ -570,7 +577,7 @@ std::string WorkspaceDBQuery::insert_download_for_object(const boost::json::stri
     
     if (meta.shockurl.empty())
     {
-	qry << "file_path" << db_.global_state()->config().filesystem_path_for_object(path);
+	qry << "file_path" << db_.config().filesystem_path_for_object(path);
     }
     else
     {
@@ -597,4 +604,29 @@ std::string WorkspaceDBQuery::insert_download_for_object(const boost::json::stri
     BOOST_LOG_SEV(lg_, wslog::debug) << "QRY: " << bsoncxx::to_json(qry.view());
 
     return key;
+}
+
+bool WorkspaceDBQuery::lookup_download(const std::string &key, std::string &name, size_t &size,
+				       std::string &shock_node, std::string &token,
+				       std::string &file_path)
+{
+    auto coll = (*client_)[db_.db_name()]["downloads"];
+    builder::stream::document qry;
+    qry << "download_key" << key;
+    auto res = coll.find_one(qry.view());
+    if (res)
+    {
+	auto obj = res->view();
+	std::cerr << "Found: " << bsoncxx::to_json(res->view()) << "\n";
+	name = get_string(obj, "name");
+	size = obj["size"].get_int64().value;
+	shock_node = get_string(obj, "shock_node");
+	token = get_string(obj, "token");
+	file_path = get_string(obj, "file_path");
+	return true;
+    }
+    else
+    {
+	return false;
+    }
 }

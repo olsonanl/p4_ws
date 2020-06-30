@@ -56,8 +56,11 @@ OPENSSL_INCLUDE = -I$(OPENSSL)/include
 OPENSSL_LDFLAGS = -Wl,-rpath,$(OPENSSL)/lib
 OPENSSL_LIBS = -L$(OPENSSL)/lib -lcrypto -lssl
 
+#OPTIMIZE = -O4
+OPTIMIZE = -g
+
 INCLUDES = -I. -I$(BOOST)/include $(BOOST_JSON) $(MONGODB_CFLAGS) -Iinih $(OPENSSL_INCLUDE)
-CXXFLAGS = $(INCLUDES) -g  -std=c++14 $(CXX_HANDLER_TRACKING) -DBOOST_USE_VALGRIND
+CXXFLAGS = $(INCLUDES) $(OPTIMIZE)  -std=c++14 $(CXX_HANDLER_TRACKING) -DBOOST_USE_VALGRIND
 CXX_LDFLAGS = -Wl,-rpath,$(BUILD_TOOLS)/lib64 -Wl,-rpath,$(BOOST)/lib -Wl,-rpath,$(MONGODB_BASE)/lib64 $(OPENSSL_LDFLAGS)
 LDFLAGS = -L$(BOOST)/lib
 
@@ -94,14 +97,17 @@ deploy-service:
 
 binaries: $(TOP_DIR)/bin/p4x-workspace
 
-p4x-workspace: p4x-workspace.o WorkspaceDB.o WorkspaceService.o Logging.o ServiceConfig.o Shock.o UserAgent.o WorkspaceConfig.o
-	PATH=$(BUILD_TOOLS)/bin:$$PATH $(CXX) $(CXX_DEFINES) -g -o $@ $^ $(CXXFLAGS) $(LDFLAGS) $(CXX_LDFLAGS) $(LIBS) -lssl -lcrypto
+p4x-workspace: p4x-workspace.o WorkspaceDB.o WorkspaceService.o Logging.o ServiceConfig.o Shock.o UserAgent.o WorkspaceConfig.o HTTPServer.o
+	PATH=$(BUILD_TOOLS)/bin:$$PATH $(CXX) $(CXX_DEFINES) $(OPTIMIZE) -o $@ $^ $(CXXFLAGS) $(LDFLAGS) $(CXX_LDFLAGS) $(LIBS) -lssl -lcrypto
 
 $(TOP_DIR)/bin/%: %
 	cp $^ $@
 
 depend: 
 	makedepend *.cpp *.cc tests/*.cpp
+
+clean:
+	rm *.o p4x-workspace
 
 tests: $(TESTS)
 	echo $(TESTS)
@@ -113,11 +119,11 @@ SigningCerts.h: SigningCerts.h.tt load-signing-certs.pl
 	$(DEPLOY_RUNTIME)/bin/perl load-signing-certs.pl
 
 x: x.o
-	PATH=$(BUILD_TOOLS)/bin:$$PATH $(CXX) -DPIDINFO_TEST_MAIN -g -o $@ $^ $(CXXFLAGS) $(LDFLAGS) $(CXX_LDFLAGS) $(LIBS)
+	PATH=$(BUILD_TOOLS)/bin:$$PATH $(CXX) -DPIDINFO_TEST_MAIN $(OPTIMIZE) -o $@ $^ $(CXXFLAGS) $(LDFLAGS) $(CXX_LDFLAGS) $(LIBS)
 y: y.o UserAgent.o
-	PATH=$(BUILD_TOOLS)/bin:$$PATH $(CXX) -DPIDINFO_TEST_MAIN -g -o $@ $^ $(CXXFLAGS) $(LDFLAGS) $(CXX_LDFLAGS) $(LIBS)
+	PATH=$(BUILD_TOOLS)/bin:$$PATH $(CXX) -DPIDINFO_TEST_MAIN $(OPTIMIZE) -o $@ $^ $(CXXFLAGS) $(LDFLAGS) $(CXX_LDFLAGS) $(LIBS)
 ssl: ssl.o
-	PATH=$(BUILD_TOOLS)/bin:$$PATH $(CXX) -DPIDINFO_TEST_MAIN -g -o $@ $^ $(CXXFLAGS) $(LDFLAGS) $(CXX_LDFLAGS) $(LIBS)
+	PATH=$(BUILD_TOOLS)/bin:$$PATH $(CXX) -DPIDINFO_TEST_MAIN $(OPTIMIZE) -o $@ $^ $(CXXFLAGS) $(LDFLAGS) $(CXX_LDFLAGS) $(LIBS)
 
 json/include/boost/json.hpp: 
 	git clone https://github.com/CPPAlliance/json
@@ -126,7 +132,7 @@ inih/INIReader.h:
 	git clone https://github.com/jtilly/inih
 
 pidinfo: pidinfo.cc
-	PATH=$(BUILD_TOOLS)/bin:$$PATH $(CXX) -DPIDINFO_TEST_MAIN -g -o $@ $^ $(CXXFLAGS) $(LDFLAGS) $(CXX_LDFLAGS) $(LIBS)
+	PATH=$(BUILD_TOOLS)/bin:$$PATH $(CXX) -DPIDINFO_TEST_MAIN $(OPTIMIZE) -o $@ $^ $(CXXFLAGS) $(LDFLAGS) $(CXX_LDFLAGS) $(LIBS)
 
 all: 
 
@@ -140,9 +146,12 @@ include $(TOP_DIR)/tools/Makefile.common.rules
 
 # DO NOT DELETE
 
+HTTPServer.o: HTTPServer.h Logging.h ServiceDispatcher.h JSONRPC.h
+HTTPServer.o: WorkspaceErrors.h DispatchContext.h AuthToken.h
 Logging.o: Logging.h
-p4x-workspace.o: WorkspaceTypes.h Logging.h WorkspaceService.h
-p4x-workspace.o: WorkspaceErrors.h WorkspaceState.h AuthToken.h
+p4x-workspace.o: HTTPServer.h Logging.h ServiceDispatcher.h JSONRPC.h
+p4x-workspace.o: WorkspaceErrors.h DispatchContext.h AuthToken.h
+p4x-workspace.o: WorkspaceTypes.h WorkspaceService.h WorkspaceState.h
 p4x-workspace.o: SigningCerts.h /usr/include/openssl/bio.h
 p4x-workspace.o: /usr/include/openssl/e_os2.h
 p4x-workspace.o: /usr/include/openssl/opensslconf.h
@@ -186,8 +195,7 @@ p4x-workspace.o: /usr/include/asm-generic/errno.h
 p4x-workspace.o: /usr/include/asm-generic/errno-base.h
 p4x-workspace.o: /usr/include/openssl/conf.h WorkspaceConfig.h
 p4x-workspace.o: ServiceConfig.h Shock.h parse_url.h UserAgent.h Base64.h
-p4x-workspace.o: ServiceDispatcher.h JSONRPC.h WorkspaceDB.h
-p4x-workspace.o: DispatchContext.h RootCertificates.h
+p4x-workspace.o: WorkspaceDB.h RootCertificates.h
 p4x-workspace.o: /usr/include/openssl/x509v3.h
 ServiceConfig.o: ServiceConfig.h
 Shock.o: Shock.h AuthToken.h parse_url.h
@@ -228,100 +236,17 @@ ssl.o: /usr/include/bits/errno.h /usr/include/linux/errno.h
 ssl.o: /usr/include/asm/errno.h /usr/include/asm-generic/errno.h
 ssl.o: /usr/include/asm-generic/errno-base.h /usr/include/openssl/conf.h
 UserAgent.o: UserAgent.h parse_url.h
-WorkspaceConfig.o: WorkspaceService.h WorkspaceErrors.h WorkspaceState.h
-WorkspaceConfig.o: AuthToken.h SigningCerts.h /usr/include/openssl/bio.h
-WorkspaceConfig.o: /usr/include/openssl/e_os2.h
-WorkspaceConfig.o: /usr/include/openssl/opensslconf.h
-WorkspaceConfig.o: /usr/include/openssl/opensslconf-x86_64.h
-WorkspaceConfig.o: /usr/include/stdio.h /usr/include/features.h
-WorkspaceConfig.o: /usr/include/sys/cdefs.h /usr/include/bits/wordsize.h
-WorkspaceConfig.o: /usr/include/gnu/stubs.h /usr/include/gnu/stubs-64.h
-WorkspaceConfig.o: /usr/include/bits/types.h /usr/include/bits/typesizes.h
-WorkspaceConfig.o: /usr/include/libio.h /usr/include/_G_config.h
-WorkspaceConfig.o: /usr/include/wchar.h /usr/include/bits/stdio_lim.h
-WorkspaceConfig.o: /usr/include/bits/sys_errlist.h
-WorkspaceConfig.o: /usr/include/openssl/crypto.h /usr/include/stdlib.h
-WorkspaceConfig.o: /usr/include/bits/waitflags.h
-WorkspaceConfig.o: /usr/include/bits/waitstatus.h /usr/include/endian.h
-WorkspaceConfig.o: /usr/include/bits/endian.h /usr/include/bits/byteswap.h
-WorkspaceConfig.o: /usr/include/sys/types.h /usr/include/time.h
-WorkspaceConfig.o: /usr/include/sys/select.h /usr/include/bits/select.h
-WorkspaceConfig.o: /usr/include/bits/sigset.h /usr/include/bits/time.h
-WorkspaceConfig.o: /usr/include/sys/sysmacros.h
-WorkspaceConfig.o: /usr/include/bits/pthreadtypes.h /usr/include/alloca.h
-WorkspaceConfig.o: /usr/include/openssl/stack.h
-WorkspaceConfig.o: /usr/include/openssl/safestack.h
-WorkspaceConfig.o: /usr/include/openssl/opensslv.h
-WorkspaceConfig.o: /usr/include/openssl/ossl_typ.h
-WorkspaceConfig.o: /usr/include/openssl/symhacks.h /usr/include/openssl/pem.h
-WorkspaceConfig.o: /usr/include/openssl/evp.h /usr/include/openssl/fips.h
-WorkspaceConfig.o: /usr/include/openssl/objects.h
-WorkspaceConfig.o: /usr/include/openssl/obj_mac.h /usr/include/openssl/asn1.h
-WorkspaceConfig.o: /usr/include/openssl/bn.h /usr/include/limits.h
-WorkspaceConfig.o: /usr/include/bits/posix1_lim.h
-WorkspaceConfig.o: /usr/include/bits/local_lim.h /usr/include/linux/limits.h
-WorkspaceConfig.o: /usr/include/bits/posix2_lim.h /usr/include/openssl/x509.h
-WorkspaceConfig.o: /usr/include/openssl/buffer.h /usr/include/openssl/ec.h
-WorkspaceConfig.o: /usr/include/openssl/ecdsa.h /usr/include/openssl/ecdh.h
-WorkspaceConfig.o: /usr/include/openssl/rsa.h /usr/include/openssl/dsa.h
-WorkspaceConfig.o: /usr/include/openssl/dh.h /usr/include/openssl/sha.h
-WorkspaceConfig.o: /usr/include/openssl/x509_vfy.h
-WorkspaceConfig.o: /usr/include/openssl/lhash.h /usr/include/openssl/pkcs7.h
-WorkspaceConfig.o: /usr/include/openssl/pem2.h /usr/include/openssl/err.h
-WorkspaceConfig.o: /usr/include/errno.h /usr/include/bits/errno.h
-WorkspaceConfig.o: /usr/include/linux/errno.h /usr/include/asm/errno.h
-WorkspaceConfig.o: /usr/include/asm-generic/errno.h
-WorkspaceConfig.o: /usr/include/asm-generic/errno-base.h
-WorkspaceConfig.o: /usr/include/openssl/conf.h WorkspaceConfig.h
-WorkspaceConfig.o: ServiceConfig.h Shock.h parse_url.h UserAgent.h Base64.h
-WorkspaceConfig.o: ServiceDispatcher.h JSONRPC.h WorkspaceDB.h
-WorkspaceConfig.o: WorkspaceTypes.h DispatchContext.h Logging.h
+WorkspaceConfig.o: WorkspaceService.h WorkspaceErrors.h DispatchContext.h
+WorkspaceConfig.o: AuthToken.h Logging.h WorkspaceTypes.h JSONRPC.h
+WorkspaceConfig.o: WorkspaceConfig.h ServiceConfig.h
 WorkspaceDB.o: WorkspaceDB.h WorkspaceTypes.h DispatchContext.h AuthToken.h
-WorkspaceDB.o: Logging.h PathParser.h WorkspaceService.h WorkspaceErrors.h
-WorkspaceDB.o: WorkspaceState.h SigningCerts.h /usr/include/openssl/bio.h
-WorkspaceDB.o: /usr/include/openssl/e_os2.h
-WorkspaceDB.o: /usr/include/openssl/opensslconf.h
-WorkspaceDB.o: /usr/include/openssl/opensslconf-x86_64.h /usr/include/stdio.h
-WorkspaceDB.o: /usr/include/features.h /usr/include/sys/cdefs.h
-WorkspaceDB.o: /usr/include/bits/wordsize.h /usr/include/gnu/stubs.h
-WorkspaceDB.o: /usr/include/gnu/stubs-64.h /usr/include/bits/types.h
-WorkspaceDB.o: /usr/include/bits/typesizes.h /usr/include/libio.h
-WorkspaceDB.o: /usr/include/_G_config.h /usr/include/wchar.h
-WorkspaceDB.o: /usr/include/bits/stdio_lim.h /usr/include/bits/sys_errlist.h
-WorkspaceDB.o: /usr/include/openssl/crypto.h /usr/include/stdlib.h
-WorkspaceDB.o: /usr/include/bits/waitflags.h /usr/include/bits/waitstatus.h
-WorkspaceDB.o: /usr/include/endian.h /usr/include/bits/endian.h
-WorkspaceDB.o: /usr/include/bits/byteswap.h /usr/include/sys/types.h
-WorkspaceDB.o: /usr/include/time.h /usr/include/sys/select.h
-WorkspaceDB.o: /usr/include/bits/select.h /usr/include/bits/sigset.h
-WorkspaceDB.o: /usr/include/bits/time.h /usr/include/sys/sysmacros.h
-WorkspaceDB.o: /usr/include/bits/pthreadtypes.h /usr/include/alloca.h
-WorkspaceDB.o: /usr/include/openssl/stack.h /usr/include/openssl/safestack.h
-WorkspaceDB.o: /usr/include/openssl/opensslv.h
-WorkspaceDB.o: /usr/include/openssl/ossl_typ.h
-WorkspaceDB.o: /usr/include/openssl/symhacks.h /usr/include/openssl/pem.h
-WorkspaceDB.o: /usr/include/openssl/evp.h /usr/include/openssl/fips.h
-WorkspaceDB.o: /usr/include/openssl/objects.h /usr/include/openssl/obj_mac.h
-WorkspaceDB.o: /usr/include/openssl/asn1.h /usr/include/openssl/bn.h
-WorkspaceDB.o: /usr/include/limits.h /usr/include/bits/posix1_lim.h
-WorkspaceDB.o: /usr/include/bits/local_lim.h /usr/include/linux/limits.h
-WorkspaceDB.o: /usr/include/bits/posix2_lim.h /usr/include/openssl/x509.h
-WorkspaceDB.o: /usr/include/openssl/buffer.h /usr/include/openssl/ec.h
-WorkspaceDB.o: /usr/include/openssl/ecdsa.h /usr/include/openssl/ecdh.h
-WorkspaceDB.o: /usr/include/openssl/rsa.h /usr/include/openssl/dsa.h
-WorkspaceDB.o: /usr/include/openssl/dh.h /usr/include/openssl/sha.h
-WorkspaceDB.o: /usr/include/openssl/x509_vfy.h /usr/include/openssl/lhash.h
-WorkspaceDB.o: /usr/include/openssl/pkcs7.h /usr/include/openssl/pem2.h
-WorkspaceDB.o: /usr/include/openssl/err.h /usr/include/errno.h
-WorkspaceDB.o: /usr/include/bits/errno.h /usr/include/linux/errno.h
-WorkspaceDB.o: /usr/include/asm/errno.h /usr/include/asm-generic/errno.h
-WorkspaceDB.o: /usr/include/asm-generic/errno-base.h
-WorkspaceDB.o: /usr/include/openssl/conf.h WorkspaceConfig.h ServiceConfig.h
-WorkspaceDB.o: Shock.h parse_url.h UserAgent.h Base64.h ServiceDispatcher.h
-WorkspaceDB.o: JSONRPC.h
-WorkspaceService.o: WorkspaceService.h WorkspaceErrors.h WorkspaceState.h
-WorkspaceService.o: AuthToken.h SigningCerts.h /usr/include/openssl/bio.h
-WorkspaceService.o: /usr/include/openssl/e_os2.h
+WorkspaceDB.o: Logging.h PathParser.h parse_url.h WorkspaceConfig.h
+WorkspaceDB.o: ServiceConfig.h
+WorkspaceService.o: WorkspaceService.h WorkspaceErrors.h DispatchContext.h
+WorkspaceService.o: AuthToken.h Logging.h WorkspaceTypes.h JSONRPC.h
+WorkspaceService.o: WorkspaceDB.h WorkspaceConfig.h ServiceConfig.h
+WorkspaceService.o: WorkspaceState.h SigningCerts.h
+WorkspaceService.o: /usr/include/openssl/bio.h /usr/include/openssl/e_os2.h
 WorkspaceService.o: /usr/include/openssl/opensslconf.h
 WorkspaceService.o: /usr/include/openssl/opensslconf-x86_64.h
 WorkspaceService.o: /usr/include/stdio.h /usr/include/features.h
@@ -365,10 +290,8 @@ WorkspaceService.o: /usr/include/errno.h /usr/include/bits/errno.h
 WorkspaceService.o: /usr/include/linux/errno.h /usr/include/asm/errno.h
 WorkspaceService.o: /usr/include/asm-generic/errno.h
 WorkspaceService.o: /usr/include/asm-generic/errno-base.h
-WorkspaceService.o: /usr/include/openssl/conf.h WorkspaceConfig.h
-WorkspaceService.o: ServiceConfig.h Shock.h parse_url.h UserAgent.h Base64.h
-WorkspaceService.o: ServiceDispatcher.h JSONRPC.h WorkspaceDB.h
-WorkspaceService.o: WorkspaceTypes.h DispatchContext.h Logging.h
+WorkspaceService.o: /usr/include/openssl/conf.h Shock.h parse_url.h
+WorkspaceService.o: UserAgent.h Base64.h
 y.o: UserAgent.h parse_url.h RootCertificates.h /usr/include/openssl/x509v3.h
 y.o: /usr/include/openssl/bio.h /usr/include/openssl/e_os2.h
 y.o: /usr/include/openssl/opensslconf.h
@@ -401,55 +324,4 @@ y.o: /usr/include/openssl/rsa.h /usr/include/openssl/dsa.h
 y.o: /usr/include/openssl/dh.h /usr/include/openssl/sha.h
 y.o: /usr/include/openssl/x509_vfy.h /usr/include/openssl/lhash.h
 y.o: /usr/include/openssl/pkcs7.h /usr/include/openssl/conf.h
-tests/path_parser.o: PathParser.h WorkspaceService.h WorkspaceErrors.h
-tests/path_parser.o: WorkspaceState.h AuthToken.h SigningCerts.h
-tests/path_parser.o: /usr/include/openssl/bio.h /usr/include/openssl/e_os2.h
-tests/path_parser.o: /usr/include/openssl/opensslconf.h
-tests/path_parser.o: /usr/include/openssl/opensslconf-x86_64.h
-tests/path_parser.o: /usr/include/stdio.h /usr/include/features.h
-tests/path_parser.o: /usr/include/sys/cdefs.h /usr/include/bits/wordsize.h
-tests/path_parser.o: /usr/include/gnu/stubs.h /usr/include/gnu/stubs-64.h
-tests/path_parser.o: /usr/include/bits/types.h /usr/include/bits/typesizes.h
-tests/path_parser.o: /usr/include/libio.h /usr/include/_G_config.h
-tests/path_parser.o: /usr/include/wchar.h /usr/include/bits/stdio_lim.h
-tests/path_parser.o: /usr/include/bits/sys_errlist.h
-tests/path_parser.o: /usr/include/openssl/crypto.h /usr/include/stdlib.h
-tests/path_parser.o: /usr/include/bits/waitflags.h
-tests/path_parser.o: /usr/include/bits/waitstatus.h /usr/include/endian.h
-tests/path_parser.o: /usr/include/bits/endian.h /usr/include/bits/byteswap.h
-tests/path_parser.o: /usr/include/sys/types.h /usr/include/time.h
-tests/path_parser.o: /usr/include/sys/select.h /usr/include/bits/select.h
-tests/path_parser.o: /usr/include/bits/sigset.h /usr/include/bits/time.h
-tests/path_parser.o: /usr/include/sys/sysmacros.h
-tests/path_parser.o: /usr/include/bits/pthreadtypes.h /usr/include/alloca.h
-tests/path_parser.o: /usr/include/openssl/stack.h
-tests/path_parser.o: /usr/include/openssl/safestack.h
-tests/path_parser.o: /usr/include/openssl/opensslv.h
-tests/path_parser.o: /usr/include/openssl/ossl_typ.h
-tests/path_parser.o: /usr/include/openssl/symhacks.h
-tests/path_parser.o: /usr/include/openssl/pem.h /usr/include/openssl/evp.h
-tests/path_parser.o: /usr/include/openssl/fips.h
-tests/path_parser.o: /usr/include/openssl/objects.h
-tests/path_parser.o: /usr/include/openssl/obj_mac.h
-tests/path_parser.o: /usr/include/openssl/asn1.h /usr/include/openssl/bn.h
-tests/path_parser.o: /usr/include/limits.h /usr/include/bits/posix1_lim.h
-tests/path_parser.o: /usr/include/bits/local_lim.h
-tests/path_parser.o: /usr/include/linux/limits.h
-tests/path_parser.o: /usr/include/bits/posix2_lim.h
-tests/path_parser.o: /usr/include/openssl/x509.h
-tests/path_parser.o: /usr/include/openssl/buffer.h /usr/include/openssl/ec.h
-tests/path_parser.o: /usr/include/openssl/ecdsa.h /usr/include/openssl/ecdh.h
-tests/path_parser.o: /usr/include/openssl/rsa.h /usr/include/openssl/dsa.h
-tests/path_parser.o: /usr/include/openssl/dh.h /usr/include/openssl/sha.h
-tests/path_parser.o: /usr/include/openssl/x509_vfy.h
-tests/path_parser.o: /usr/include/openssl/lhash.h
-tests/path_parser.o: /usr/include/openssl/pkcs7.h /usr/include/openssl/pem2.h
-tests/path_parser.o: /usr/include/openssl/err.h /usr/include/errno.h
-tests/path_parser.o: /usr/include/bits/errno.h /usr/include/linux/errno.h
-tests/path_parser.o: /usr/include/asm/errno.h
-tests/path_parser.o: /usr/include/asm-generic/errno.h
-tests/path_parser.o: /usr/include/asm-generic/errno-base.h
-tests/path_parser.o: /usr/include/openssl/conf.h WorkspaceConfig.h
-tests/path_parser.o: ServiceConfig.h Shock.h parse_url.h UserAgent.h Base64.h
-tests/path_parser.o: ServiceDispatcher.h JSONRPC.h WorkspaceDB.h
-tests/path_parser.o: WorkspaceTypes.h DispatchContext.h Logging.h
+tests/path_parser.o: PathParser.h WorkspaceTypes.h

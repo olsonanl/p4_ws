@@ -20,6 +20,7 @@
 #include "Logging.h"
 
 class WorkspaceDB;
+class WorkspaceConfig;
 
 class WorkspaceDBQuery
     : public wslog::LoggerBase
@@ -68,6 +69,9 @@ public:
      */
     std::string insert_download_for_object(const boost::json::string &path_str, const AuthToken &ws_token,
 					   ObjectMeta &meta, std::vector<std::string> &shock_urls);
+    bool lookup_download(const std::string &key, std::string &name, size_t &size,
+			 std::string &shock_node, std::string &token,
+			 std::string &file_path);
 };
 
 class WorkspaceState;
@@ -79,15 +83,17 @@ class WorkspaceDB
     mongocxx::uri uri_;
     std::unique_ptr<mongocxx::pool> pool_;
     mongocxx::instance instance_;
+
+    WorkspaceConfig &config_;
     int n_threads_;
 
     std::unique_ptr<boost::asio::thread_pool> thread_pool_;
-    std::weak_ptr<WorkspaceState> global_state_;
 
     boost::thread_specific_ptr<boost::uuids::random_generator> uuidgen_;
 public:
-    WorkspaceDB()
+    WorkspaceDB(WorkspaceConfig &config)
 	: wslog::LoggerBase("wsdb")
+	, config_(config)
 	, n_threads_(1) {
     }
 
@@ -98,6 +104,7 @@ public:
     std::unique_ptr<WorkspaceDBQuery> make_query(const AuthToken &token, bool admin_mode = false);
 
     const std::string &db_name() { return db_name_; }
+    WorkspaceConfig &config() { return config_; }
 
     /*
      * Execute the given function in a thread in the thread pool.
@@ -125,9 +132,6 @@ public:
 	    BOOST_LOG_SEV(lg_, wslog::error) << "async_wait: " << ec.message() << "\n";
 
     }
-
-    std::shared_ptr<WorkspaceState> global_state() { return global_state_.lock(); }
-    void global_state(std::shared_ptr<WorkspaceState> g) { global_state_ = g; }
 
     boost::uuids::random_generator *uuidgen() {
 	auto gen = uuidgen_.get();

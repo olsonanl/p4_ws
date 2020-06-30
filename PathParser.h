@@ -5,7 +5,7 @@
 #include <functional>
 #include <vector>
 
-#include "WorkspaceService.h"
+#include "WorkspaceTypes.h"
 
 class WSPathParser
 {

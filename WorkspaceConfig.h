@@ -18,6 +18,7 @@ class WorkspaceConfig
     std::string mongodb_dbname_;
     std::string mongodb_url_;
     int mongodb_client_threads_;
+    std::string api_root_;
 public:
     WorkspaceConfig()
 	: ServiceConfig("Workspace")
@@ -43,7 +44,9 @@ public:
 	mongodb_url_ = get_string("mongodb-host", "");
 	mongodb_dbname_ = get_string("mongodb-database", "");
 	mongodb_client_threads_ = get_long("mongodb-client-threads", 1);
-       
+
+	api_root_ = get_string("api-root", "/api");
+
 	return true;
     }
 
@@ -58,6 +61,7 @@ public:
     const std::string &mongodb_url() const { return mongodb_url_; }
     const std::string &mongodb_dbname() const { return mongodb_dbname_; }
     int mongodb_client_threads() const { return mongodb_client_threads_; }
+    const std::string &api_root()  const { return api_root_; }
 };
 
 

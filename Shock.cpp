@@ -26,6 +26,7 @@ fail(beast::error_code ec, char const* what)
 
 void Shock::request(const std::string &method, const URL &url, const AuthToken &token, boost::asio::yield_context yield)
 {
+    // TODO - perhaps resolver should be local here and part of the strand
     beast::tcp_stream stream(net::make_strand(ioc_));
     beast::flat_buffer buffer;
     http::request<http::empty_body> req;
