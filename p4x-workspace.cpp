@@ -16,6 +16,7 @@
 #include <string>
 #include <functional>
 
+#include "WorkspaceTypes.h"
 #include "Logging.h"
 #include "WorkspaceService.h"
 #include "WorkspaceState.h"
@@ -80,7 +81,17 @@ public:
     }
 
 private:
-    
+
+    /*
+     * GET requests.
+     * We for now have a /quit that quits the server
+     * TODO this should require admin authentication or connect only from localhost.
+     *
+     * The /dl resource handles the downloads as defined by the
+     * Workspace.get_download_url method. It expects URLs of the form
+     * /dl/{UUID}/filename
+     */
+
     void handle_get(decltype(header_parser_)::value_type &req, net::yield_context yield) {
 	if (req.target() == "/quit")
 	{
@@ -184,7 +195,7 @@ private:
 	    DispatchContext dc(yield, stream_.get_executor(), token_, disp_logger);
 
 	    int http_code = 200;
-	    state_->dispatcher()->dispatch(rpc_req, rpc_resp, dc, http_code);
+	    state_->dispatcher().dispatch(rpc_req, rpc_resp, dc, http_code);
 
 	    boost::json::value response_value = rpc_resp.full_response();
 
@@ -408,9 +419,9 @@ private:
 
 int main(int argc, char *argv[])
 {
-    if (argc != 4)
+    if (argc != 3)
     {
-	std::cerr << "Usage: " << argv[0] << " port threads ws-uri\n";
+	std::cerr << "Usage: " << argv[0] << " port threads\n";
 	return EXIT_FAILURE;
     }
 
@@ -418,13 +429,42 @@ int main(int argc, char *argv[])
     wslog::init("", wslog::normal, wslog::debug);
     wslog::logger lg(wslog::channel = "main");
 
-    std::string db_name("WorkspaceBuild");
     auto const address = net::ip::make_address("0.0.0.0");
     auto const port = static_cast<unsigned short>(std::atoi(argv[1]));
     auto const threads = std::max<int>(1, std::atoi(argv[2]));
-    std::string ws_uri(argv[3]);
 
     BOOST_LOG_SEV(lg, wslog::debug) << "Listening on " << port << " with " << threads << " threads\n";
+
+    /*
+     * Overall system configuration.
+     *
+     * We have the following subsystems:
+     *
+     * System configuration information managed in WorkspaceConfig.
+     * Parses a config file as defined by the standard environment variables
+     * KB_DEPLOYMENT_CONFIG and KB_SERVICE_NAME.
+     * TODO add a command line parameter to override service name, perhaps
+     *
+     * Mongo database connectivity in WorkspaceDB. Requires config information to start.
+     * Maintains internal thread pool for safely handling multiple requests while keeping
+     * the main request threads from blocking.
+     *
+     * Workspace service execution core in WorkspaceService.
+     * Uses the WorkspaceDB for database lookups, as well as the async methods
+     * for other network access.
+     * Uses the Shock module for Shock database manipulations
+     * Uses the UserAgent module for other HTTP client access.
+     *
+     * Shock module provides interface to the Shock service. It is standalone
+     * but requires io_context and ssl_context configuration.
+     *
+     * Logging is built using the Boost logging library
+     * We define a logging base class and namespace in
+     * Logging.h. The wslog::LoggerBase provides a per-class loggign
+     * instance and a fail() method that logs the boost::system::error_code
+     * that the Boost ASIO & related libraries generate.
+     *
+     */
 
     // IO context is required for I/O in C++ Networking
 
@@ -447,16 +487,9 @@ int main(int argc, char *argv[])
     Shock shock(ioc, ssl_ctx);
     UserAgent user_agent(ioc, ssl_ctx);
 
-    // JSONRPC service dispatcher
-    auto dispatcher = std::make_shared<ServiceDispatcher>();
-
-    // multithreaded Mongo database wrapper
-    auto db = std::make_shared<WorkspaceDB>(ws_uri, std::max(1, threads - 1), db_name);
-
     // Create our global state container.
     
-    auto global_state = std::make_shared<WorkspaceState>(dispatcher, db, std::move(shock), std::move(user_agent));
-    db->global_state(global_state);
+    auto global_state = std::make_shared<WorkspaceState>(std::move(shock), std::move(user_agent));
 
     // Parse config
     if (!global_state->config().parse())
@@ -465,10 +498,19 @@ int main(int argc, char *argv[])
 	return 1;
     }
 
+    // Intialize database
+
+    WorkspaceDB &db = global_state->db();
+    
+    db.global_state(global_state);
+    db.init_database(global_state->config().mongodb_url(),
+		     global_state->config().mongodb_client_threads(),
+		     global_state->config().mongodb_dbname());
+    
     auto workspace_service = std::make_shared<WorkspaceService>(global_state);
 
 
-    dispatcher->register_service("Workspace",
+    global_state->dispatcher().register_service("Workspace",
 				 [workspace_service]
 				 (const JsonRpcRequest &req, JsonRpcResponse &resp,
 				  DispatchContext &dc,
@@ -492,10 +534,15 @@ int main(int argc, char *argv[])
     {
 	v.emplace_back([&ioc] { ioc.run(); });
     }
-
+	
     ioc.run();
 
-    dispatcher->unregister_service("Workspace");
+    // Block until all the threads exit
+    for (auto& t : v)
+	t.join();
+
+
+    global_state->dispatcher().unregister_service("Workspace");
 
     SSL_finish();
     

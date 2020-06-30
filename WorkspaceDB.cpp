@@ -56,62 +56,6 @@ inline std::string mongo_user_encode(const std::string& in)
     return std::move(os.str());
 }
 
-// NB this doesn't encode with the same case as the perl encoder
-// which has inserted the data mongo. to properly fix we will
-// need case insensitive matching on the permission names.
-inline bool url_encode(const std::string& in, std::string& out, std::string &chars)
-{
-    std::ostringstream os;
-    for (std::size_t i = 0; i < in.size(); ++i)
-    {
-	if (chars.find(in[i]) != std::string::npos)
-	    os << "%" << std::setfill('0') << std::setw(2) << std::hex << static_cast<int>(in[i]);
-	else
-	    os << in[i];
-    }
-    out = std::move(os.str());
-    return true;
-}
-
-inline bool url_decode(const std::string& in, std::string& out)
-{
-    out.clear();
-    out.reserve(in.size());
-    for (std::size_t i = 0; i < in.size(); ++i)
-    {
-	if (in[i] == '%')
-	{
-	    if (i + 3 <= in.size())
-	    {
-		int value = 0;
-		std::istringstream is(in.substr(i + 1, 2));
-		if (is >> std::hex >> value)
-		{
-		    out += static_cast<char>(value);
-		    i += 2;
-		}
-		else
-		{
-		    return false;
-		}
-	    }
-	    else
-	    {
-		return false;
-	    }
-	}
-	else if (in[i] == '+')
-	{
-	    out += ' ';
-	}
-	else
-	{
-	    out += in[i];
-	}
-    }
-    return true;
-}
-
 static std::string get_stringish(const bsoncxx::document::element &elt)
 {
     switch (elt.type())
@@ -210,6 +154,7 @@ static std::tm get_tm(const bsoncxx::document::view &doc, const std::string &key
     return v;
 }
 
+#if 0
 WorkspaceDB::WorkspaceDB(const std::string &uri, int threads, const std::string &db_name)
     : db_name_(db_name)
     , uri_(uri)
@@ -238,8 +183,17 @@ WorkspaceDB::WorkspaceDB(const std::string &uri, int threads, const std::string 
 	std::cout << bsoncxx::to_json(v[i]) << "\n";
 #endif   
 }
+#endif
 
-//void WorkspaceDB::list_workspaces(std::shared_ptr<std::vector<
+bool WorkspaceDB::init_database(const std::string &uri, int threads, const std::string &db_name)
+{
+    db_name_ = db_name;
+    uri_ = static_cast<mongocxx::uri>(uri);
+    pool_ = std::make_unique<mongocxx::pool>(uri_);
+    n_threads_ = threads;
+    thread_pool_ = std::make_unique<boost::asio::thread_pool>(threads);
+    return true;
+}
 
 /*
  * Query needs to post into the thread pool,
@@ -248,8 +202,8 @@ WorkspaceDB::WorkspaceDB(const std::string &uri, int threads, const std::string 
 
 std::unique_ptr<WorkspaceDBQuery> WorkspaceDB::make_query(const AuthToken &token, bool admin_mode)
 {
-    auto pe = pool_.acquire();
-    return std::make_unique<WorkspaceDBQuery>(token, admin_mode, std::move(pe), shared_from_this());
+    auto pe = pool_->acquire();
+    return std::make_unique<WorkspaceDBQuery>(token, admin_mode, std::move(pe), *this);
 }
 
 inline std::string to_string(boost::json::string s)
@@ -283,7 +237,7 @@ ObjectMeta WorkspaceDBQuery::lookup_object_meta(const WSPath &o)
     }
     else
     {
-	auto coll = (*client_)[db_->db_name()]["objects"];;
+	auto coll = (*client_)[db_.db_name()]["objects"];;
 	auto qry = builder::basic::document{};
 
 	qry.append(kvp("path", o.path));
@@ -371,7 +325,7 @@ void WorkspaceDBQuery::populate_workspace_from_db_obj(WSWorkspace &ws, const bso
 
 void WorkspaceDBQuery::populate_workspace_from_db(WSWorkspace &ws)
 {
-    auto coll = (*client_)[db_->db_name()]["workspaces"];
+    auto coll = (*client_)[db_.db_name()]["workspaces"];
     auto qry = builder::basic::document{};
 
     qry.append(kvp("owner", ws.owner));
@@ -505,7 +459,7 @@ bool WorkspaceDBQuery::user_has_permission(const WSWorkspace &w, WSPermission mi
 
 std::vector<ObjectMeta> WorkspaceDBQuery::list_objects(const WSPath &path, bool excludeDirectories, bool excludeObjects, bool recursive)
 {
-    auto coll = (*client_)[db_->db_name()]["objects"];
+    auto coll = (*client_)[db_.db_name()]["objects"];
 
     auto qry = builder::basic::document{};
 
@@ -544,7 +498,7 @@ std::vector<ObjectMeta> WorkspaceDBQuery::list_objects(const WSPath &path, bool 
 
 std::vector<ObjectMeta> WorkspaceDBQuery::list_workspaces(const std::string &owner)
 {
-    auto coll = (*client_)[db_->db_name()]["workspaces"];
+    auto coll = (*client_)[db_.db_name()]["workspaces"];
 
     std::vector<ObjectMeta> meta_list;
 
@@ -590,21 +544,23 @@ std::vector<ObjectMeta> WorkspaceDBQuery::list_workspaces(const std::string &own
     return meta_list;
 }
 
-std::string WorkspaceDBQuery::insert_download_for_object(const boost::json::string &path_str, const AuthToken &ws_token)
+std::string WorkspaceDBQuery::insert_download_for_object(const boost::json::string &path_str, const AuthToken &ws_token,
+							 ObjectMeta &meta, std::vector<std::string> &shock_urls)
 {
     WSPath path = parse_path(path_str);
-    ObjectMeta meta = lookup_object_meta(path);
+    meta = lookup_object_meta(path);
     if (!(meta.is_object() && user_has_permission(path.workspace, WSPermission::read)))
     {
 	return "";
     }
     
-    boost::uuids::uuid uuid = (*(db_->uuidgen()))();
+    boost::uuids::uuid uuid = (*(db_.uuidgen()))();
     std::string key = boost::lexical_cast<std::string>(uuid);
 
     builder::stream::document qry;
+    auto coll = (*client_)[db_.db_name()]["downloads"];
 
-    std::time_t expires = time(0) + db_->global_state()->config().download_lifetime();
+    std::time_t expires = time(0) + db_.global_state()->config().download_lifetime();
     
     qry << "workspace_path" << path_str.c_str()
 	<< "download_key" << key
@@ -614,17 +570,30 @@ std::string WorkspaceDBQuery::insert_download_for_object(const boost::json::stri
     
     if (meta.shockurl.empty())
     {
-	qry << "file_path" << db_->global_state()->config().filesystem_path_for_object(path);
+	qry << "file_path" << db_.global_state()->config().filesystem_path_for_object(path);
     }
     else
     {
 	qry << "shock_node" << meta.shockurl;
 
+	/*
+	 * If we have a valid token, include that token in the download record
+	 * and ensure Shock has an acl for it (we will do that work back in the
+	 * main request thread, recording the list in shock_urls).
+	 * If we don't, we have a public-readable path and the token
+	 * we embed is the WS owner token.
+	 */
 	if (token().valid())
+	{
+	    shock_urls.emplace_back(meta.shockurl);
 	    qry << "token" << token().token();
+	}
 	else
+	{
 	    qry << "token" << ws_token.token();
+	}
     }
+    coll.insert_one(qry.view());
     BOOST_LOG_SEV(lg_, wslog::debug) << "QRY: " << bsoncxx::to_json(qry.view());
 
     return key;

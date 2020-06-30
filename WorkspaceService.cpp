@@ -84,7 +84,7 @@ void WorkspaceService::method_ls(const JsonRpcRequest &req, JsonRpcResponse &res
     // database thread as the work is all database-based
     
     json::object output;
-    global_state_->db()->run_in_thread(dc,
+    global_state_->db().run_in_thread(dc,
 				       [this, &paths, &output, &dc,
 					excludeDirectories, excludeObjects, recursive, fullHierachicalOutput]
 				       (std::unique_ptr<WorkspaceDBQuery> qobj) 
@@ -189,7 +189,7 @@ void WorkspaceService::method_get(const JsonRpcRequest &req, JsonRpcResponse &re
 	ObjectMeta meta;
 
 	std::string file_data;
-	global_state_->db()->run_in_thread(dc,
+	global_state_->db().run_in_thread(dc,
 					   [&path, path_str = obj.as_string(),
 					    metadata_only, &meta]
 					   (std::unique_ptr<WorkspaceDBQuery> qobj) 
@@ -286,7 +286,7 @@ void WorkspaceService::method_list_permissions(const JsonRpcRequest &req, JsonRp
 
     json::object output;
 
-    global_state_->db()->run_in_thread(dc,
+    global_state_->db().run_in_thread(dc,
 				       [objects, &output]
 				       (std::unique_ptr<WorkspaceDBQuery> qobj) 
        	{
@@ -348,24 +348,43 @@ void WorkspaceService::method_get_download_url(const JsonRpcRequest &req, JsonRp
      * For each object, validate the path and ensure it points to a file
      * and not a folder. Then create the unique download ID and register with the
      * database.
+     *
+     * We need to collect the Shock URLs to ensure access is available for them.
+     * We don't just collect the URL out of the meta objects because a decision
+     * was made inside the insert_download_for_object code to see if the 
+     * current user had a valid token; only then do we add the Shock url to the list.
      */
 
     AuthToken &ws_auth = global_state_->ws_auth(dc.yield);
-
+    std::vector<std::string> shock_urls;
     
-    auto work = [&dc, &objects, &output, &ws_auth, this] (std::unique_ptr<WorkspaceDBQuery> qobj)
+    auto work = [&dc, &objects, &output, &ws_auth, &shock_urls, this] (std::unique_ptr<WorkspaceDBQuery> qobj)
 	{
-	    //
-	    // We're building a list of documents to insert into the mongodb.
-	    //
 	    for (auto obj: objects)
 	    {
 		auto path_str = obj.as_string();
-		std::string key = qobj->insert_download_for_object(path_str, ws_auth);
+		ObjectMeta meta;
+		std::string key = qobj->insert_download_for_object(path_str, ws_auth, meta, shock_urls);
+		if (key.empty())
+		{
+		    output.emplace_back(key);
+		}
+		else
+		{
+		    std::string encoded_name;
+		    url_encode(meta.name, encoded_name);
+		    output.emplace_back(config().download_url_base() + "/" + key + "/" + encoded_name);
+		}
+		    
 	    }
 	};
 
-    global_state_->db()->run_in_thread(dc, work);
+    global_state_->db().run_in_thread(dc, work);
+
+    for (auto url: shock_urls)
+    {
+	global_state_->shock().acl_add_user(url, dc.token, dc.yield);
+    }
 
     resp.result().emplace_back(output);
     BOOST_LOG_SEV(dc.lg_, wslog::debug) << output << "\n";

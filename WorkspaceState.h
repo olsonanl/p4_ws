@@ -14,16 +14,15 @@
 #include "Shock.h"
 #include "UserAgent.h"
 #include "Base64.h"
-
-class ServiceDispatcher;
-class WorkspaceDB;
+#include "ServiceDispatcher.h"
+#include "WorkspaceDB.h"
 
 class WorkspaceState : public std::enable_shared_from_this<WorkspaceState>
 {
     std::string api_root_;
     bool quit_;
-    std::shared_ptr<ServiceDispatcher> dispatcher_;
-    std::shared_ptr<WorkspaceDB> db_;
+    ServiceDispatcher dispatcher_;
+    WorkspaceDB db_;
     SigningCerts certs_;
     WorkspaceConfig config_;
     Shock shock_;
@@ -31,14 +30,10 @@ class WorkspaceState : public std::enable_shared_from_this<WorkspaceState>
     AuthToken ws_auth_;
 
 public:
-    WorkspaceState(std::shared_ptr<ServiceDispatcher> dispatcher,
-		   std::shared_ptr<WorkspaceDB> db,
-		   Shock shock,
-		   UserAgent user_agent)
+    WorkspaceState(Shock &&shock,
+		   UserAgent &&user_agent)
 	: api_root_("/api")
 	, quit_(false)
-	, dispatcher_(dispatcher)
-	, db_(db)
 	, shock_(std::move(shock))
 	, user_agent_(std::move(user_agent)) {
     }
@@ -48,9 +43,9 @@ public:
     bool quit() { return quit_; }
     void quit(bool v) { quit_ = v; }
 
-    std::shared_ptr<ServiceDispatcher> dispatcher() { return dispatcher_; }
+    ServiceDispatcher &dispatcher() { return dispatcher_; }
 
-    std::shared_ptr<WorkspaceDB> db() { return db_; }
+    WorkspaceDB &db() { return db_; }
 
     const SigningCerts &signing_certs () const { return certs_; }
     bool validate_certificate(const AuthToken &tok) { return certs_.validate(tok); }

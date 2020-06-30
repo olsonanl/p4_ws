@@ -99,4 +99,63 @@ public:
     }
 };
 
+// NB this doesn't encode with the same case as the perl encoder
+// which has inserted the data mongo. to properly fix we will
+// need case insensitive matching on the permission names.
+//
+// Default set is the RFC3986 reserved characters set plus space.
+//
+inline bool url_encode(const std::string& in, std::string& out, std::string chars = ":/?#[]@!$&'()*+,;= ")
+{
+    std::ostringstream os;
+    for (std::size_t i = 0; i < in.size(); ++i)
+    {
+	if (chars.find(in[i]) != std::string::npos)
+	    os << "%" << std::setfill('0') << std::setw(2) << std::hex << static_cast<int>(in[i]);
+	else
+	    os << in[i];
+    }
+    out = std::move(os.str());
+    return true;
+}
+
+inline bool url_decode(const std::string& in, std::string& out)
+{
+    out.clear();
+    out.reserve(in.size());
+    for (std::size_t i = 0; i < in.size(); ++i)
+    {
+	if (in[i] == '%')
+	{
+	    if (i + 3 <= in.size())
+	    {
+		int value = 0;
+		std::istringstream is(in.substr(i + 1, 2));
+		if (is >> std::hex >> value)
+		{
+		    out += static_cast<char>(value);
+		    i += 2;
+		}
+		else
+		{
+		    return false;
+		}
+	    }
+	    else
+	    {
+		return false;
+	    }
+	}
+	else if (in[i] == '+')
+	{
+	    out += ' ';
+	}
+	else
+	{
+	    out += in[i];
+	}
+    }
+    return true;
+}
+
 #endif

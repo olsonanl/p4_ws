@@ -12,8 +12,9 @@
 #include "JSONRPC.h"
 #include "WorkspaceErrors.h"
 
+class DispatchContext;
+
 class ServiceDispatcher
-    : public std::enable_shared_from_this<ServiceDispatcher>
 {
     using dispatch_cb = std::function<void(const JsonRpcRequest &,
 					   JsonRpcResponse &,
@@ -26,6 +27,10 @@ public:
     ServiceDispatcher () { }
     ~ServiceDispatcher() {
 	map_.clear();
+    }
+
+    ServiceDispatcher(ServiceDispatcher &&d)
+	: map_(std::move(d.map_)) {
     }
 
     void register_service(const boost::json::string &name, dispatch_cb cb) {

@@ -1,5 +1,5 @@
-#include "WorkspaceConfig.h"
 #include "WorkspaceService.h"
+#include "WorkspaceConfig.h"
 
 std::string WorkspaceConfig::filesystem_path_for_object(const WSPath &obj)
 {

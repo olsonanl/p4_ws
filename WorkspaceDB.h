@@ -15,8 +15,8 @@
 #include <boost/uuid/uuid.hpp>
 #include <boost/uuid/uuid_generators.hpp>
 
-#include "WorkspaceService.h"
 #include "WorkspaceTypes.h"
+#include "DispatchContext.h"
 #include "Logging.h"
 
 class WorkspaceDB;
@@ -28,10 +28,10 @@ private:
     const AuthToken &token_;
     bool admin_mode_;
     mongocxx::pool::entry  client_;
-    std::shared_ptr<WorkspaceDB> db_;
+    WorkspaceDB &db_;
 
 public:
-    WorkspaceDBQuery(const AuthToken &token, bool admin_mode, mongocxx::pool::entry p, std::shared_ptr<WorkspaceDB> db)
+    WorkspaceDBQuery(const AuthToken &token, bool admin_mode, mongocxx::pool::entry p, WorkspaceDB &db)
 	: token_(token)
 	, admin_mode_(admin_mode)
 	, client_(std::move(p))
@@ -66,38 +66,53 @@ public:
     /*
      * Download support.
      */
-    std::string insert_download_for_object(const boost::json::string &path_str, const AuthToken &ws_token);
+    std::string insert_download_for_object(const boost::json::string &path_str, const AuthToken &ws_token,
+					   ObjectMeta &meta, std::vector<std::string> &shock_urls);
 };
 
 class WorkspaceState;
 
 class WorkspaceDB
     : public wslog::LoggerBase
-    , public std::enable_shared_from_this<WorkspaceDB>
 {
     std::string db_name_;
     mongocxx::uri uri_;
-    mongocxx::pool pool_;
+    std::unique_ptr<mongocxx::pool> pool_;
     mongocxx::instance instance_;
+    int n_threads_;
 
-    boost::asio::thread_pool thread_pool_;
+    std::unique_ptr<boost::asio::thread_pool> thread_pool_;
     std::weak_ptr<WorkspaceState> global_state_;
 
     boost::thread_specific_ptr<boost::uuids::random_generator> uuidgen_;
 public:
-    WorkspaceDB(const std::string &uri, int threads, const std::string &db_name);
+    WorkspaceDB()
+	: wslog::LoggerBase("wsdb")
+	, n_threads_(1) {
+    }
 
     ~WorkspaceDB() { BOOST_LOG_SEV(lg_, wslog::debug) << "destroy WorkspaceDB\n"; }
+
+    bool init_database(const std::string &uri, int threads, const std::string &db_name);
 
     std::unique_ptr<WorkspaceDBQuery> make_query(const AuthToken &token, bool admin_mode = false);
 
     const std::string &db_name() { return db_name_; }
-    boost::asio::thread_pool &thread_pool() { return thread_pool_; }
 
+    /*
+     * Execute the given function in a thread in the thread pool.
+     * We use the timer in the DispatchContext to wake up the asynchronous
+     * coroutine when the query completes; this is done by taking advantage
+     * of the behavior that a canceled timer is an event that will trigger
+     * the awakening of the coroutine.
+     *
+     * We also use the make_query method to create a mongocxx pool
+     * connection handle for the use of this thread.
+     */
     template<typename Func>
     void run_in_thread(DispatchContext &dc, Func qfunc) {
 	dc.timer.expires_at(boost::posix_time::pos_infin);
-	boost::asio::post(thread_pool_,
+	boost::asio::post(*(thread_pool_.get()),
 			  [&dc, qfunc, this]() {
 			      auto q = make_query(dc.token, dc.admin_mode);
 			      qfunc(std::move(q));
