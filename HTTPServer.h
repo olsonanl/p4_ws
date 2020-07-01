@@ -230,7 +230,8 @@ namespace ws_http_server {
 
 		boost::json::value response_value = rpc_resp.full_response();
 
-		BOOST_LOG_SEV(lg_, wslog::debug) << "Req " << rpc_req << " had code " << http_code << " with response " << response_value << "\n";
+		BOOST_LOG_SEV(lg_, wslog::debug) << "Req " << rpc_req << " had code " << http_code << "\n";
+//		BOOST_LOG_SEV(lg_, wslog::debug) << "Req " << rpc_req << " had code " << http_code << " with response " << response_value << "\n";
 
 		/*
 		 * Chunked responses will take some more thought.

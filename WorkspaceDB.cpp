@@ -275,6 +275,8 @@ ObjectMeta WorkspaceDBQuery::metadata_from_db(const WSWorkspace &ws, const bsonc
     meta.name = get_string(obj, "name");
     meta.type = get_string(obj, "type");
     meta.path = "/" + ws.owner + "/" + ws.name + "/" + get_string(obj, "path");
+    if (meta.path[meta.path.size()-1] != '/')
+	meta.path += "/";
     meta.creation_time = get_tm(obj, "creation_date");
     meta.id = get_string(obj, "uuid");
     meta.owner = get_string(obj, "owner");
@@ -478,7 +480,9 @@ std::vector<ObjectMeta> WorkspaceDBQuery::list_objects(const WSPath &path, bool 
 
     if (recursive)
     {
-        auto regex = bsoncxx::types::b_regex("^" + path.full_path(), "");
+	std::string regex_str = "^" + path.full_path();
+	std::cerr << "RECUR " << path << "'" << regex_str << "'\n";
+        auto regex = bsoncxx::types::b_regex(regex_str);
 	qry.append(kvp("path", regex));
     }
     else
