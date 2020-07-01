@@ -21,7 +21,7 @@ sub test_get_download_url
     my($ua, $url, $token) = @_;
 
     my @objs = ('/olson@patricbrc.org/home/toy1.fq',
-		'/olson@patricbrc.org/home/test/tree-1',
+		'/olson@patricbrc.org/home/test/tree1',
 		'/olson@patricbrc.org/home/Genome Groups/ default ');
 
     for my $obj (@objs)

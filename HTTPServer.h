@@ -27,6 +27,8 @@
 #include "WorkspaceService.h"
 #include "WorkspaceDB.h"
 
+class Shock;
+
 namespace ws_http_server {
 
     namespace beast = boost::beast;         // from <boost/beast.hpp>
@@ -42,13 +44,15 @@ namespace ws_http_server {
 	std::string api_root_;
 	ServiceDispatcher &dispatcher_;
 	WorkspaceService &workspace_service_;
+	Shock &shock_;
 	bool quit_;
     public:
-	explicit Server(net::io_context &ioc, std::string api_root, ServiceDispatcher &dispatcher, WorkspaceService &svc)
+	explicit Server(net::io_context &ioc, std::string api_root, ServiceDispatcher &dispatcher, WorkspaceService &svc, Shock &shock)
 	    : ioc_(ioc)
 	    , api_root_(api_root)
 	    , dispatcher_(dispatcher)
 	    , workspace_service_(svc)
+	    , shock_(shock)
 	    , quit_(false) {
 	}
 	
@@ -57,7 +61,9 @@ namespace ws_http_server {
 	void quit_server() { quit_ = true; }
 	ServiceDispatcher &dispatcher() { return dispatcher_; }
 	WorkspaceService &workspace_service() { return workspace_service_; }
+	Shock &shock() { return shock_; }
 	const std::string &api_root() { return api_root_; }
+	net::io_context &ioc() { return ioc_; }
     };
 
     inline std::string name_logger(const std::string &base, const tcp::socket &sock)

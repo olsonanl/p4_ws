@@ -121,7 +121,7 @@ int main(int argc, char *argv[])
 
     // Create our listener and start it running.
 
-    Server server(ioc, global_state.config().api_root(), dispatcher, workspace_service);
+    Server server(ioc, global_state.config().api_root(), dispatcher, workspace_service, shock);
 
     server.run(address, port, threads);
 

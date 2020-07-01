@@ -1,7 +1,3 @@
-#include "Shock.h"
-
-#include <boost/beast/core.hpp>
-#include <boost/beast/http.hpp>
 #include <boost/beast/version.hpp>
 #include <boost/asio/strand.hpp>
 #include <cstdlib>
@@ -10,6 +6,9 @@
 #include <memory>
 #include <string>
 #include <boost/json.hpp>
+
+#include "Shock.h"
+#include "WorkspaceErrors.h"
 
 namespace beast = boost::beast;         // from <boost/beast.hpp>
 namespace http = beast::http;           // from <boost/beast/http.hpp>
@@ -23,6 +22,7 @@ fail(beast::error_code ec, char const* what)
 {
     std::cerr << what << ": " << ec.message() << "\n";
 }
+
 
 void Shock::request(const std::string &method, const URL &url, const AuthToken &token, boost::asio::yield_context yield)
 {

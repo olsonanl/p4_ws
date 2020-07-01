@@ -99,6 +99,17 @@ public:
     }
 };
 
+inline std::ostream &operator<<(std::ostream &os, URL &url)
+{
+    os << "URL(" << url.protocol()
+       << "," << url.domain()
+       << "," << url.port()
+       << "," << url.path()
+       << "," << url.query()
+       << ")";
+    return os;
+}
+
 // NB this doesn't encode with the same case as the perl encoder
 // which has inserted the data mongo. to properly fix we will
 // need case insensitive matching on the permission names.
