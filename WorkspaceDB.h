@@ -110,7 +110,14 @@ public:
 	, n_threads_(1) {
     }
 
-    ~WorkspaceDB() { BOOST_LOG_SEV(lg_, wslog::debug) << "destroy WorkspaceDB\n"; }
+    ~WorkspaceDB() {
+	BOOST_LOG_SEV(lg_, wslog::debug) << "destroy WorkspaceDB";
+	sync_ioc_.stop();
+	
+	BOOST_LOG_SEV(lg_, wslog::debug) << "join sync thread";
+	sync_thread_.join();
+	BOOST_LOG_SEV(lg_, wslog::debug) << "WorkspaceDB done";
+    }
 
     bool init_database(const std::string &uri, int threads, const std::string &db_name);
 
@@ -126,7 +133,7 @@ public:
      * of the behavior that a canceled timer is an event that will trigger
      * the awakening of the coroutine.
      *
-     * We also use the make_query method to create a mongocxx pool
+     * We also use the \ref make_query method to create a mongocxx pool
      * connection handle for the use of this thread.
      */
     template<typename Func>
@@ -146,7 +153,7 @@ public:
 
     }
     /**
-     * Same as run_in_thread, except we run in the single sync
+     * Same as  \ref run_in_thread, except we run in the single sync
      * thread. Used for serializing metadata operations.
      */
     template<typename Func>
@@ -171,7 +178,7 @@ public:
 	if (gen == 0)
 	{
 	    gen = new boost::uuids::random_generator();
-	    std::cerr << "creating new uuidgen " << gen << "\n";
+	    std::cerr << "creating new uuidgen " << gen << " in thread " << std::this_thread::get_id() << "\n";
 	    uuidgen_.reset(gen);
 	}
 	return gen;

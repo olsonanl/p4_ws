@@ -209,37 +209,40 @@ struct ObjectToCreate
 	auto obj = val.as_array();
 	path = obj[0].as_string().c_str();
 	type = obj[1].as_string().c_str();
-	auto m = obj[2].as_object();
-	for (auto elt: m)
+	if (obj.size() >= 3)
 	{
-	    auto &val =  elt.value();
-	    switch (val.kind())
+	    auto m = obj[2].as_object();
+	    for (auto elt: m)
 	    {
-	    case boost::json::kind::double_:
-		user_metadata.emplace(std::make_pair(elt.key(), std::to_string(val.as_double())));
-		break;
+		auto &val =  elt.value();
+		switch (val.kind())
+		{
+		case boost::json::kind::double_:
+		    user_metadata.emplace(std::make_pair(elt.key(), std::to_string(val.as_double())));
+		    break;
 
-	    case boost::json::kind::int64:
-		user_metadata.emplace(std::make_pair(elt.key(), std::to_string(val.as_int64())));
-		break;
+		case boost::json::kind::int64:
+		    user_metadata.emplace(std::make_pair(elt.key(), std::to_string(val.as_int64())));
+		    break;
 
-	    case boost::json::kind::uint64:
-		user_metadata.emplace(std::make_pair(elt.key(), std::to_string(val.as_uint64())));
-		break;
+		case boost::json::kind::uint64:
+		    user_metadata.emplace(std::make_pair(elt.key(), std::to_string(val.as_uint64())));
+		    break;
 		
-	    case boost::json::kind::string:
-		user_metadata.emplace(std::make_pair(elt.key(), val.as_string().c_str()));
-		break;
+		case boost::json::kind::string:
+		    user_metadata.emplace(std::make_pair(elt.key(), val.as_string().c_str()));
+		    break;
 		
-	    default:
-		user_metadata.emplace(std::make_pair(elt.key(), ""));
+		default:
+		    user_metadata.emplace(std::make_pair(elt.key(), ""));
+		}
 	    }
 	}
-	if (obj[3].kind() == boost::json::kind::string)
+	if (obj.size() >= 4 && obj[3].kind() == boost::json::kind::string)
 	{
 	    object_data = obj[3].as_string().c_str();
 	}
-	if (obj[4].kind() == boost::json::kind::string)
+	if (obj.size() >= 5 && obj[4].kind() == boost::json::kind::string)
 	{
 	    std::istringstream ss(obj[4].as_string().c_str());
 	    ss >> std::get_time(&creation_time, "%Y-%m-%dT%H:%M:%SZ");
