@@ -645,3 +645,44 @@ bool WorkspaceDBQuery::lookup_download(const std::string &key, std::string &name
 	return false;
     }
 }
+
+ObjectMeta WorkspaceDBQuery::create_workspace_object(const ObjectToCreate &tc)
+{
+    ObjectMeta meta;
+    std::cerr << "create " << tc << " " << tc.parsed_path << "\n";
+
+    auto coll = (*client_)[db_.db_name()]["objects"];
+    builder::stream::document qry;
+
+    boost::uuids::uuid uuidobj = (*(db_.uuidgen()))();
+    qry << "uuid" << boost::lexical_cast<std::string>(uuidobj);
+    qry << "creation_date" << tc.creation_time_str();
+
+    builder::stream::document user_metadata;
+    for (auto x: tc.user_metadata)
+	user_metadata << x.first << x.second;
+    qry << "user_metadata" << user_metadata;
+    qry << "folder" << (is_folder(tc.type) ? 1 : 0);
+    qry << "name" << tc.parsed_path.name;
+    qry << "path" << tc.parsed_path.path;
+    // FIX OWNER qry << "owner" <<
+    qry << "workspace_uuid" << tc.parsed_path.workspace.uuid;
+    
+    std::cerr << bsoncxx::to_json(qry.view()) << "\n";
+/*
+    auto res = coll.find_one(qry.view());
+    if (res)
+    {
+	auto obj = res->view();
+	std::cerr << "Found: " << bsoncxx::to_json(res->view()) << "\n";
+	name = get_string(obj, "name");
+	size = obj["size"].get_int64().value;
+	shock_node = get_string(obj, "shock_node");
+	token = get_string(obj, "token");
+	file_path = get_string(obj, "file_path");
+	return true;
+    }
+*/  
+
+return meta;
+}

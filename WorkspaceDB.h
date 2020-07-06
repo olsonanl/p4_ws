@@ -75,6 +75,17 @@ public:
     bool lookup_download(const std::string &key, std::string &name, size_t &size,
 			 std::string &shock_node, std::string &token,
 			 std::string &file_path);
+
+    /**
+     * Create a workspace object.
+     * We assume here that we have already performed any requisite checks
+     * for overwrites, permission, etc. This just formats and performs the database operation.
+     *
+     * We allocate the object UUID here.
+     */
+    
+    ObjectMeta create_workspace_object(const ObjectToCreate &tc);
+
 };
 
 class WorkspaceState;

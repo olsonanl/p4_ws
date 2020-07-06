@@ -121,6 +121,7 @@ void WorkspaceService::method_create(const JsonRpcRequest &req, JsonRpcResponse 
 {
     json::array objects;
     std::string permission;
+    auto &cfg = shared_state_.config();
     bool createUploadNodes, downloadFromLinks;
     try {
 	auto input = req.params().at(0).as_object();
@@ -130,7 +131,7 @@ void WorkspaceService::method_create(const JsonRpcRequest &req, JsonRpcResponse 
 	permission = object_at_as_string(input, "permission", "n");
 	
 	if (object_at_as_bool(input, "adminmode"))
-	    dc.admin_mode = shared_state_.config().user_is_admin(dc.token.user());
+	    dc.admin_mode = cfg.user_is_admin(dc.token.user());
     } catch (std::invalid_argument e) {
 	BOOST_LOG_SEV(dc.lg_, wslog::debug) << "error parsing: " << e.what() << "\n";
 	resp.set_error(-32602, "Invalid request parameters");
@@ -148,7 +149,37 @@ void WorkspaceService::method_create(const JsonRpcRequest &req, JsonRpcResponse 
     for (auto obj: objects)
     {
 	try {
-	    to_create.emplace_back(obj);
+	    ObjectToCreate tc{obj};
+	    std::string canon;
+	    if (!cfg.is_valid_type(tc.type, canon))
+	    {
+		BOOST_LOG_SEV(dc.lg_, wslog::debug) << "Invalid type requested " << tc.type;
+		resp.set_error(-32602, "Invalid object type requested");
+		http_code = 500;
+		return;
+	    }
+	    tc.type = canon;
+
+	    /*
+	     * If creation time wasn't specified, use the current time.
+	     */
+	    if (tc.creation_time.tm_year == 0 &&
+		tc.creation_time.tm_mon == 0 &&
+		tc.creation_time.tm_mday == 0 &&
+		tc.creation_time.tm_hour == 0 &&
+		tc.creation_time.tm_min == 0 &&
+		tc.creation_time.tm_sec == 0)
+	    {
+		std::time_t t = std::time(nullptr);
+		std::tm *tm = std::gmtime(&t);
+		if (tm)
+		    tc.creation_time = *tm;
+		else
+		    BOOST_LOG_SEV(dc.lg_, wslog::error) << "std::gmtime returned null";
+		    
+	    }
+		
+	    to_create.emplace_back(tc);
 	} catch (std::exception e) {
 	    BOOST_LOG_SEV(dc.lg_, wslog::debug) << "error parsing: " << e.what() << "\n";
 	    resp.set_error(-32602, "Invalid request parameters");
@@ -303,6 +334,9 @@ void WorkspaceService::process_create(WorkspaceDBQuery & qobj, DispatchContext &
 	else
 	{
 	    // We are creating a new object.
+	    ObjectMeta created = qobj.create_workspace_object(to_create);
+	    ret_value = created.serialize();
+	    return;
 	}
     }
 }

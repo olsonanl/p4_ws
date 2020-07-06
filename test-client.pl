@@ -15,7 +15,7 @@ my $ua = LWP::UserAgent->new();
 my $url = 'http://holly:12312/api';
 
 test_create($ua, $url, $token);
-test_get_download_url($ua, $url, $token);
+#test_get_download_url($ua, $url, $token);
 
 sub test_get_download_url
 {
@@ -39,11 +39,12 @@ sub test_create
     my($ua, $url, $token) = @_;
 
     my @objs = (
-		['/olson@patricbrc.org/home/test', 'folder', { a => 34, b => 3.14, c => "some data" }],
-		['/olson@patricbrc.org/home/test', 'reads', { a => 34, b => 3.14, c => "some data" }],
-		['/olson@patricbrc.org/home/toy1.fq', 'reads', { a => 34, b => 3.14, c => "some data" }],
-		['/olson@patricbrc.org/home/toy1.fq', 'folder', { a => 34, b => 3.14, c => "some data" }],
-		['/olson@patricbrc.org/xxx/yyy/zzz', 'folder', { a => 34, b => 3.14, c => "some data" }],
+#		['/olson@patricbrc.org/home/test', 'folder', { a => 34, b => 3.14, c => "some data" }],
+#		['/olson@patricbrc.org/home/test', 'reads', { a => 34, b => 3.14, c => "some data" }],
+		['/olson@patricbrc.org/home/newtest', 'txt', { a => 34, b => 3.14, c => "some data" }],
+#		['/olson@patricbrc.org/home/toy1.fq', 'reads', { a => 34, b => 3.14, c => "some data" }],
+#		['/olson@patricbrc.org/home/toy1.fq', 'folder', { a => 34, b => 3.14, c => "some data" }],
+#		['/olson@patricbrc.org/xxx/yyy/zzz', 'folder', { a => 34, b => 3.14, c => "some data" }],
 #		['/olson@patricbrc.org/xxx', 'folder', { a => 34, b => 3.14, c => "some data" }],
 #		['/olsonx@patricbrc.org/xxx', 'folder', { a => 34, b => 3.14, c => "some data" }],
 #		['/abcde', 'folder', { a => 34, b => 3.14, c => "some data" }],
