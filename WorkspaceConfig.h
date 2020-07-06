@@ -19,6 +19,8 @@ class WorkspaceConfig
     std::string mongodb_url_;
     int mongodb_client_threads_;
     std::string api_root_;
+    std::set<std::string> valid_types_;
+    
 public:
     WorkspaceConfig()
 	: ServiceConfig("Workspace")
@@ -49,11 +51,43 @@ public:
 
 	api_root_ = get_string("api-root", "/api");
 
+	std::string types_file = get_string("types-file", "");
+	if (types_file.empty())
+	    throw std::runtime_error("Missing types file in configuration");
+	std::ifstream ifstr(types_file);
+	if (!ifstr)
+	    throw std::runtime_error("Cannot open types file " + types_file);
+	std::string line;
+	while (ifstr)
+	{
+	    std::getline(ifstr, line, '\n');
+	    if (!line.empty())
+	    {
+		valid_types_.insert(line);
+	    }
+	}
+					 
+
 	return true;
     }
 
     bool user_is_admin(const std::string &user) const {
 	return admins_.find(user) != admins_.end();
+    }
+
+    bool is_valid_type(const std::string &t, std::string &canonical) const {
+	if (t == "directory")
+	{
+	    canonical = "folder";
+	    return true;
+	}
+	if (valid_types_.find(t) != valid_types_.end())
+	{
+	    canonical = t;
+	    return true;
+	}
+	return false;
+	
     }
     const std::string &filesystem_base() const { return filesystem_base_; }
 
