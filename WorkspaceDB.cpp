@@ -142,11 +142,6 @@ static long get_int64(const bsoncxx::document::view &doc, const std::string &key
     return v;
 }
 
-inline bool is_folder(const std::string &type)
-{
-    return type == "folder" || type == "modelfolder";
-}
-
 static std::tm get_tm(const bsoncxx::document::view &doc, const std::string &key)
 {
     std::tm v = {};
@@ -199,6 +194,17 @@ bool WorkspaceDB::init_database(const std::string &uri, int threads, const std::
     pool_ = std::make_unique<mongocxx::pool>(uri_);
     n_threads_ = threads;
     thread_pool_ = std::make_unique<boost::asio::thread_pool>(threads);
+
+    // Start up our sync thread
+    sync_thread_ = std::thread([this]() {
+	std::cerr << "starting sync thread " << std::this_thread::get_id() << "\n";
+	net::executor_work_guard<net::io_context::executor_type> guard
+	    = net::make_work_guard(sync_ioc_);
+	sync_ioc_.run(); 
+
+	std::cerr << "exiting sync thread " << std::this_thread::get_id() << "\n";
+    });
+       
     return true;
 }
 
@@ -361,7 +367,7 @@ void WorkspaceDBQuery::populate_workspace_from_db(WSWorkspace &ws)
     }
 }
 
-WSPath WorkspaceDBQuery::parse_path(boost::json::value pstr)
+WSPath WorkspaceDBQuery::parse_path(const boost::json::value &pstr)
 {
     if (pstr.kind() == boost::json::kind::string)
 	return parse_path(pstr.as_string());
@@ -369,14 +375,19 @@ WSPath WorkspaceDBQuery::parse_path(boost::json::value pstr)
 	return WSPath();
 }
 
-WSPath WorkspaceDBQuery::parse_path(boost::json::string pstr)
+WSPath WorkspaceDBQuery::parse_path(const boost::json::string &pstr)
+{
+    return parse_path(std::string(pstr.c_str()));
+}
+
+WSPath WorkspaceDBQuery::parse_path(const std::string &pstr)
 {
     BOOST_LOG_SEV(lg_, wslog::debug) << "validating " << pstr << "\n";
 
     WSPathParser parser;
     WSPath path;
 
-    if (parser.parse(pstr.c_str()))
+    if (parser.parse(pstr))
     {
 	path = parser.extract_path();
 

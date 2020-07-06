@@ -30,7 +30,7 @@ public:
 	: ioc_(s.ioc_)
 	, resolver_(std::move(s.resolver_))
 	, ssl_ctx_(s.ssl_ctx_) {
-	std::cerr << "shock move construct\n";
+	// std::cerr << "shock move construct\n";
     }
 
     void acl_add_user(const std::string &node_url, const AuthToken &token, boost::asio::yield_context yield) {

@@ -34,8 +34,10 @@ public:
 	boost::algorithm::split(admin_list, get_string("adminlist"), boost::is_any_of(";"));
 	std::copy(admin_list.begin(), admin_list.end(), std::inserter(admins_, admins_.begin()));
 
+	/*
 	for (auto x: admins_)
 	    std::cerr << "admin: " << x << "\n";
+	*/
 
 	filesystem_base_ = get_string("db-path");
 

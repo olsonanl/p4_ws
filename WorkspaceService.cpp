@@ -3,6 +3,8 @@
 #include "WorkspaceConfig.h"
 #include "WorkspaceState.h"
 
+#include <boost/lexical_cast.hpp>
+
 namespace json = boost::json;
 
 bool value_as_bool(const json::value &v)
@@ -30,6 +32,34 @@ bool object_at_as_bool(const json::object &obj, const json::string &key,
     if (iter != obj.end())
     {
 	return value_as_bool(iter->value());
+    }
+    else
+    {
+	return default_value;
+    }
+}
+
+std::string object_at_as_string(const json::object &obj, const json::string &key,
+				const std::string &default_value = "")
+{
+    auto iter = obj.find(key);
+    if (iter != obj.end())
+    {
+	auto &val = iter->value();
+	switch (val.kind())
+	{
+	case json::kind::int64:
+	    return std::to_string(val.as_int64());
+
+	case json::kind::uint64:
+	    return std::to_string(val.as_int64());
+
+	case json::kind::string:
+	    return boost::lexical_cast<std::string>(val.as_string());
+
+	default:
+	    return default_value;
+	}
     }
     else
     {
@@ -86,19 +116,18 @@ void WorkspaceService::dispatch(const JsonRpcRequest &req, JsonRpcResponse &resp
     (this->*(method.method))(req, resp, dc, http_code);
 }
 
-void WorkspaceService::method_ls(const JsonRpcRequest &req, JsonRpcResponse &resp,
-				 DispatchContext &dc, int &http_code)
+void WorkspaceService::method_create(const JsonRpcRequest &req, JsonRpcResponse &resp,
+				     DispatchContext &dc, int &http_code)
 {
-    json::array paths;
-    bool excludeDirectories, excludeObjects, recursive, fullHierachicalOutput;
-
+    json::array objects;
+    std::string permission;
+    bool createUploadNodes, downloadFromLinks;
     try {
 	auto input = req.params().at(0).as_object();
-	paths = input.at("paths").as_array();
-	excludeDirectories = object_at_as_bool(input, "excludeDirectories");
-	excludeObjects = object_at_as_bool(input, "excludeObjects");
-	recursive = object_at_as_bool(input, "recursive");
-	fullHierachicalOutput = object_at_as_bool(input, "fullHierachicalOutput");
+	objects = input.at("objects").as_array();
+	createUploadNodes = object_at_as_bool(input, "createUploadNodes");
+	downloadFromLinks = object_at_as_bool(input, "downloadFromLinks");
+	permission = object_at_as_string(input, "permission", "n");
 	
 	if (object_at_as_bool(input, "adminmode"))
 	    dc.admin_mode = shared_state_.config().user_is_admin(dc.token.user());
@@ -113,7 +142,199 @@ void WorkspaceService::method_ls(const JsonRpcRequest &req, JsonRpcResponse &res
 	http_code = 500;
 	return;
     }
+
+    std::vector<ObjectToCreate> to_create;
+    // Validate format of paths before doing any work
+    for (auto obj: objects)
+    {
+	try {
+	    to_create.emplace_back(obj);
+	} catch (std::exception e) {
+	    BOOST_LOG_SEV(dc.lg_, wslog::debug) << "error parsing: " << e.what() << "\n";
+	    resp.set_error(-32602, "Invalid request parameters");
+	    http_code = 500;
+	    return;
+	}
+    }
+
+    /*
+     * Objects have been parsed int ObjectToCreate list.
+     * Pass to process_create in the database thread.
+     */
     
+    json::array output;
+    db_.run_in_sync_thread(dc,
+		      [this, &dc, &permission, createUploadNodes, downloadFromLinks,
+		       &to_create, &output]
+		      (std::unique_ptr<WorkspaceDBQuery> qobj_ptr) 
+			  {
+			      WorkspaceDBQuery &qobj = *qobj_ptr;
+			      for (auto tc: to_create)
+			      {
+				  json::value val;
+				  process_create(qobj, dc, tc, val,
+						 permission, createUploadNodes, downloadFromLinks);
+				  output.emplace_back(val);
+			      }
+			  });
+
+    resp.result().emplace_back(output);
+    BOOST_LOG_SEV(dc.lg_, wslog::debug) << output << "\n";
+}
+
+/** 
+ * Handle the creation of a single workspace object.
+ *
+ * Parse the path, ensuring valid workspace is defined.
+ * If no workspace exists, we are creating a workspace
+ * Validate object type.
+ * Check for overwrites.
+ */
+void WorkspaceService::process_create(WorkspaceDBQuery & qobj, DispatchContext &dc,
+				      ObjectToCreate &to_create, boost::json::value &ret_value,
+				      const std::string &permission, bool createUploadNodes, bool downloadFromLinks)
+{
+    std::cerr << "Create: " << to_create << "\n";
+    to_create.parsed_path = qobj.parse_path(to_create.path);
+    std::cerr << "Parsed: " << to_create.parsed_path << "\n";
+
+    // Check the parsed path to see if the workspace is valid.
+
+    std::cerr << "process create running in thread " << std::this_thread::get_id() << "\n";
+
+    WSWorkspace &ws = to_create.parsed_path.workspace;
+
+    // Validate creation of new workspace
+    if (ws.name.empty() || ws.owner.empty())
+    {
+	// WS has to be named.
+	BOOST_LOG_SEV(dc.lg_, wslog::debug) << "no workspace name";
+	ret_value.emplace_array();
+	return;
+    }
+    if (ws.uuid.empty())
+    {
+	// Workspace does not exist; check permissions for creation
+
+	if (ws.owner != dc.token.user() && !dc.admin_mode)
+	{
+	    // Can't create WS owned by other user
+	    BOOST_LOG_SEV(dc.lg_, wslog::debug) << "WS owned by other user";
+	    ret_value.emplace_array();
+	    return;
+	}
+	else if (!is_folder(to_create.type))
+	{
+	    BOOST_LOG_SEV(dc.lg_, wslog::debug) << "WS creation has to be of folder type";
+	    ret_value.emplace_array();
+	    return;
+	}
+	else if (!ws.has_valid_name())
+	{
+	    BOOST_LOG_SEV(dc.lg_, wslog::debug) << "WS has invalid name";
+	    ret_value.emplace_array();
+	    return;
+	}
+	std::cerr << "create go for ws portion " << ws << "\n";
+    }
+    
+
+    // If we are just requesting the creation of a workspace, we are done.
+    if (to_create.parsed_path.is_workspace_path())
+    {
+	{
+	    // WS already exists; we can just return.
+	    ret_value = qobj.lookup_object_meta(to_create.parsed_path).serialize();
+	    return;
+	}
+    }
+    else
+    {
+	// Validation tests for creation of object
+	
+	if (!qobj.user_has_permission(ws, WSPermission::write))
+	{
+	    BOOST_LOG_SEV(dc.lg_, wslog::debug) << "permission denied on create";
+	    ret_value.emplace_array();
+	    return;
+	}
+	if (!to_create.parsed_path.has_valid_name())
+	{
+	    // Check, but this shouldn't be possible due to the parsing rules.
+	    BOOST_LOG_SEV(dc.lg_, wslog::debug) << "Name has invalid characters";
+	    ret_value.emplace_array();
+	    return;
+	}
+	// Look up object to check for overwrite.
+	ObjectMeta meta = qobj.lookup_object_meta(to_create.parsed_path);
+	std::cerr << "existing obj: " << meta << "\n";
+	    
+
+	if (meta.valid)
+	{
+	    // Object exists. Check to see if it is a folder and if we are creating a folder
+	    if (meta.is_folder())
+	    {
+		if (to_create.type == "folder" || to_create.type == "model_folder")
+		{
+		    // Just return data.
+		    ret_value = meta.serialize();
+		    return;
+		}
+		else
+		{
+		    BOOST_LOG_SEV(dc.lg_, wslog::debug) << "Cannot overwrite folder with object";
+		    ret_value.emplace_array();
+		    return;
+		}
+	    }
+	    else
+	    {
+		if (to_create.type == "folder" || to_create.type == "model_folder")
+		{
+		    BOOST_LOG_SEV(dc.lg_, wslog::debug) << "Cannot overwrite object with folder";
+		    ret_value.emplace_array();
+		    return;
+		}
+	    }
+
+	    // We are overwriting this object. 
+	}
+	else
+	{
+	    // We are creating a new object.
+	}
+    }
+}
+
+void WorkspaceService::method_ls(const JsonRpcRequest &req, JsonRpcResponse &resp,
+				 DispatchContext &dc, int &http_code)
+{
+    json::array paths;
+    bool excludeDirectories, excludeObjects, recursive, fullHierachicalOutput;
+
+    try {
+	auto input = req.params().at(0).as_object();
+	paths = input.at("paths").as_array();
+	excludeDirectories = object_at_as_bool(input, "excludeDirectories");
+	excludeObjects = object_at_as_bool(input, "excludeObjects");
+	recursive = object_at_as_bool(input, "recursive");
+	fullHierachicalOutput = object_at_as_bool(input, "fullHierachicalOutput");
+
+	if (object_at_as_bool(input, "adminmode"))
+	    dc.admin_mode = shared_state_.config().user_is_admin(dc.token.user());
+    } catch (std::invalid_argument e) {
+	BOOST_LOG_SEV(dc.lg_, wslog::debug) << "error parsing: " << e.what() << "\n";
+	resp.set_error(-32602, "Invalid request parameters");
+	http_code = 500;
+	return;
+    } catch (std::exception e) {
+	BOOST_LOG_SEV(dc.lg_, wslog::debug) << "error parsing: " << e.what() << "\n";
+	resp.set_error(-32602, "Invalid request parameters");
+	http_code = 500;
+	return;
+    }
+
     // Validate format of paths before doing any work
     for (auto path: paths)
     {
@@ -128,12 +349,12 @@ void WorkspaceService::method_ls(const JsonRpcRequest &req, JsonRpcResponse &res
 
     // We will run essentially this entire command in the
     // database thread as the work is all database-based
-    
+
     json::object output;
     db_.run_in_thread(dc,
 		      [this, &paths, &output, &dc,
 		       excludeDirectories, excludeObjects, recursive, fullHierachicalOutput]
-		      (std::unique_ptr<WorkspaceDBQuery> qobj) 
+		      (std::unique_ptr<WorkspaceDBQuery> qobj)
 			  {
 			      // wslog::logger l(wslog::channel = "mongo_thread");
 			      process_ls(std::move(qobj), dc, paths, output,
@@ -142,6 +363,7 @@ void WorkspaceService::method_ls(const JsonRpcRequest &req, JsonRpcResponse &res
     resp.result().emplace_back(output);
     BOOST_LOG_SEV(dc.lg_, wslog::debug) << output << "\n";
 }
+
 
 
 // This executes in a WorkspaceDB thread

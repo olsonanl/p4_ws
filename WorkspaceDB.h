@@ -2,6 +2,8 @@
 #define _Workspace_DB
 
 #include <memory>
+#include <thread>
+
 #include <mongocxx/instance.hpp>
 #include <mongocxx/uri.hpp>
 #include <mongocxx/pool.hpp>
@@ -40,8 +42,9 @@ public:
 	, wslog::LoggerBase("wsdbq") {
     }
     ~WorkspaceDBQuery() { BOOST_LOG_SEV(lg_, wslog::debug) << "destroy WorkspaceDBQuery\n"; }
-    WSPath parse_path(boost::json::value p);
-    WSPath parse_path(boost::json::string p);
+    WSPath parse_path(const boost::json::value &p);
+    WSPath parse_path(const boost::json::string &p);
+    WSPath parse_path(const std::string &p);
     ObjectMeta lookup_object_meta(const WSPath &path);
     const AuthToken &token() { return token_; }
     bool admin_mode() const { return admin_mode_; }
@@ -82,6 +85,16 @@ class WorkspaceDB
     std::string db_name_;
     mongocxx::uri uri_;
     std::unique_ptr<mongocxx::pool> pool_;
+    /**
+     * The sync IOC is used to host a single thread
+     * to which requests for database operations that must be
+     * globally serialized are made
+     */
+    boost::asio::io_context sync_ioc_;
+    /**
+     * This is the thread running for the sync_ioc_;
+     */
+    std::thread sync_thread_;
     mongocxx::instance instance_;
 
     WorkspaceConfig &config_;
@@ -106,7 +119,7 @@ public:
     const std::string &db_name() { return db_name_; }
     WorkspaceConfig &config() { return config_; }
 
-    /*
+    /**
      * Execute the given function in a thread in the thread pool.
      * We use the timer in the DispatchContext to wake up the asynchronous
      * coroutine when the query completes; this is done by taking advantage
@@ -120,6 +133,26 @@ public:
     void run_in_thread(DispatchContext &dc, Func qfunc) {
 	dc.timer.expires_at(boost::posix_time::pos_infin);
 	boost::asio::post(*(thread_pool_.get()),
+			  [&dc, qfunc, this]() {
+			      auto q = make_query(dc.token, dc.admin_mode);
+			      qfunc(std::move(q));
+			      dc.timer.cancel_one();
+			  });
+	
+	boost::system::error_code ec({});
+	dc.timer.async_wait(dc.yield[ec]);
+	if (ec != boost::asio::error::operation_aborted)
+	    BOOST_LOG_SEV(lg_, wslog::error) << "async_wait: " << ec.message() << "\n";
+
+    }
+    /**
+     * Same as run_in_thread, except we run in the single sync
+     * thread. Used for serializing metadata operations.
+     */
+    template<typename Func>
+    void run_in_sync_thread(DispatchContext &dc, Func qfunc) {
+	dc.timer.expires_at(boost::posix_time::pos_infin);
+	boost::asio::post(sync_ioc_,
 			  [&dc, qfunc, this]() {
 			      auto q = make_query(dc.token, dc.admin_mode);
 			      qfunc(std::move(q));

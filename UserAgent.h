@@ -31,7 +31,6 @@ public:
 	: ioc_(s.ioc_)
 	, resolver_(std::move(s.resolver_))
 	, ssl_ctx_(s.ssl_ctx_) {
-	std::cerr << "shock move construct\n";
     }
 
     void request(const std::string &method, const URL &url, const std::string &token, std::map<std::string, std::string> headers,

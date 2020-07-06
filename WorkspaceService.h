@@ -62,17 +62,22 @@ public:
     
 private:
     void init_dispatch() {
+	method_map_.emplace(std::make_pair("create",  Method { &WorkspaceService::method_create, Authentication::required }));
 	method_map_.emplace(std::make_pair("ls",  Method { &WorkspaceService::method_ls, Authentication::optional }));
 	method_map_.emplace(std::make_pair("get", Method { &WorkspaceService::method_get, Authentication::optional }));
 	method_map_.emplace(std::make_pair("list_permissions", Method { &WorkspaceService::method_list_permissions, Authentication::optional }));
 	method_map_.emplace(std::make_pair("get_download_url", Method { &WorkspaceService::method_get_download_url, Authentication::optional }));
     }
 
+    void method_create(const JsonRpcRequest &req, JsonRpcResponse &resp, DispatchContext &dc, int &http_code);
     void method_get(const JsonRpcRequest &req, JsonRpcResponse &resp, DispatchContext &dc, int &http_code);
     void method_ls(const JsonRpcRequest &req, JsonRpcResponse &resp, DispatchContext &dc, int &http_code);
     void method_list_permissions(const JsonRpcRequest &req, JsonRpcResponse &resp, DispatchContext &dc, int &http_code);
     void method_get_download_url(const JsonRpcRequest &req, JsonRpcResponse &resp, DispatchContext &dc, int &http_code);
 
+    void process_create(WorkspaceDBQuery & qobj, DispatchContext &dc,
+			ObjectToCreate &to_create, boost::json::value &ret_value,
+			const std::string &permission, bool createUploadNodes, bool downloadFromLinks);
     void process_ls(std::unique_ptr<WorkspaceDBQuery> qobj,
 		    DispatchContext &dc, boost::json::array &paths, boost::json::object &output,
 		    bool excludeDirectories, bool excludeObjects, bool recursive, bool fullHierachicalOutput);

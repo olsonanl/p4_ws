@@ -102,6 +102,9 @@ public:
 	    obj.emplace_back(boost::json::array { elt.first, to_string(elt.second) });
 	}
     }
+    bool has_valid_name() const {
+	return !name.empty() && name.find_first_of("/") == std::string::npos;
+    }
 };
 
 class WSPath
@@ -125,6 +128,9 @@ public:
 	    res += "/";
 	res += name;
 	return res;
+    }
+    bool has_valid_name() const {
+	return !name.empty() && name.find_first_of("/") == std::string::npos;
     }
 };
 
@@ -153,8 +159,12 @@ public:
 	, valid(false)
 	{}
 
+
     bool is_object() const {
-	return valid && !name.empty() && type != "folder" && type != "modelfolder";
+	return valid && !name.empty() && !is_folder();
+    }
+    bool is_folder() const {
+	return type == "folder" || type == "modelfolder";
     }
     boost::json::value serialize() {
 	if (valid)
@@ -176,6 +186,107 @@ public:
 	}
     }
 };
+
+/**
+ * A struct wrapper for the object parameter passed to
+ * the create method.
+ */
+struct ObjectToCreate
+{
+    std::string path;
+    WSPath parsed_path;
+    std::string type;
+    std::map<std::string, std::string> user_metadata;
+    std::string object_data;
+    std::tm creation_time;
+
+    /**
+     * Construct from the input json.
+     * Throw if the format is wrong.
+     */
+    explicit ObjectToCreate(const boost::json::value &val)
+	: creation_time{ 0, 0, 0, 0, 0, 0 } {
+	auto obj = val.as_array();
+	path = obj[0].as_string().c_str();
+	type = obj[1].as_string().c_str();
+	auto m = obj[2].as_object();
+	for (auto elt: m)
+	{
+	    auto &val =  elt.value();
+	    switch (val.kind())
+	    {
+	    case boost::json::kind::double_:
+		user_metadata.emplace(std::make_pair(elt.key(), std::to_string(val.as_double())));
+		break;
+
+	    case boost::json::kind::int64:
+		user_metadata.emplace(std::make_pair(elt.key(), std::to_string(val.as_int64())));
+		break;
+
+	    case boost::json::kind::uint64:
+		user_metadata.emplace(std::make_pair(elt.key(), std::to_string(val.as_uint64())));
+		break;
+		
+	    case boost::json::kind::string:
+		user_metadata.emplace(std::make_pair(elt.key(), val.as_string().c_str()));
+		break;
+		
+	    default:
+		user_metadata.emplace(std::make_pair(elt.key(), ""));
+	    }
+	}
+	if (obj[3].kind() == boost::json::kind::string)
+	{
+	    object_data = obj[3].as_string().c_str();
+	}
+	if (obj[4].kind() == boost::json::kind::string)
+	{
+	    std::istringstream ss(obj[4].as_string().c_str());
+	    ss >> std::get_time(&creation_time, "%Y-%m-%dT%H:%M:%SZ");
+	}
+    }
+};
+
+inline std::ostream &operator<<(std::ostream &os, std::map<std::string, std::string> m)
+{
+    os << "{";
+    auto iter = m.begin();
+    if (iter != m.end())
+    {
+	os << "{" << iter->first << ":" << iter->second << "}";
+	++iter;
+    }
+    for (; iter != m.end(); ++iter)
+    {
+	os << ",{" << iter->first << ":" << iter->second << "}";
+    }
+    os << "}";
+    return os;
+}
+
+
+inline std::ostream &operator<<(std::ostream &os, struct std::tm &t)
+{
+    os << "TM(" << t.tm_year
+       << "," << t.tm_mon
+       << "," << t.tm_mday
+       << "," << t.tm_hour
+       << "," << t.tm_min
+       << "," << t.tm_sec
+       << ")";
+    return os;
+}
+
+inline std::ostream &operator<<(std::ostream &os, ObjectToCreate&c)
+{
+    os << "OTC(" << c.path
+       << "," << c.type
+       << "," << c.user_metadata
+       << "," << c.object_data
+       << "," << c.creation_time
+       << ")";
+    return os;
+}
 
 namespace boost {
     namespace json {
@@ -274,5 +385,9 @@ inline std::ostream &operator<<(std::ostream &os, const ObjectMeta &m)
     return  os;
 }
 
+inline bool is_folder(const std::string &type)
+{
+    return type == "folder" || type == "modelfolder";
+}
 
 #endif
