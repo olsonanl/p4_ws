@@ -248,9 +248,15 @@ struct ObjectToCreate
 	    ss >> std::get_time(&creation_time, "%Y-%m-%dT%H:%M:%SZ");
 	}
     }
+
+    std::string creation_time_str() const {
+	char tmstr[256];
+	std::strftime(tmstr, sizeof(tmstr), "%Y-%m-%dT%H:%M:%SZ", &creation_time);
+	return tmstr;
+    }
 };
 
-inline std::ostream &operator<<(std::ostream &os, std::map<std::string, std::string> m)
+inline std::ostream &operator<<(std::ostream &os, const std::map<std::string, std::string> &m)
 {
     os << "{";
     auto iter = m.begin();
@@ -268,7 +274,7 @@ inline std::ostream &operator<<(std::ostream &os, std::map<std::string, std::str
 }
 
 
-inline std::ostream &operator<<(std::ostream &os, struct std::tm &t)
+inline std::ostream &operator<<(std::ostream &os, const struct std::tm &t)
 {
     os << "TM(" << t.tm_year
        << "," << t.tm_mon
@@ -280,7 +286,7 @@ inline std::ostream &operator<<(std::ostream &os, struct std::tm &t)
     return os;
 }
 
-inline std::ostream &operator<<(std::ostream &os, ObjectToCreate&c)
+inline std::ostream &operator<<(std::ostream &os, const ObjectToCreate&c)
 {
     os << "OTC(" << c.path
        << "," << c.type
