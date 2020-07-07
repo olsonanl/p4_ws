@@ -4,6 +4,8 @@
 #include "ServiceConfig.h"
 #include <set>
 #include <vector>
+
+#include <boost/filesystem.hpp>
 #include <boost/algorithm/string.hpp>
 
 class WSPath;
@@ -12,7 +14,7 @@ class WorkspaceConfig
     : public ServiceConfig
 {
     std::set<std::string> admins_;
-    std::string filesystem_base_;
+    boost::filesystem::path filesystem_base_;
     unsigned long download_lifetime_;
     std::string download_url_base_;
     std::string mongodb_dbname_;
@@ -89,9 +91,9 @@ public:
 	return false;
 	
     }
-    const std::string &filesystem_base() const { return filesystem_base_; }
+    const boost::filesystem::path &filesystem_base() const { return filesystem_base_; }
 
-    std::string filesystem_path_for_object(const WSPath &obj);
+    boost::filesystem::path filesystem_path_for_object(const WSPath &obj);
     unsigned long download_lifetime() const { return download_lifetime_; }
     const std::string &download_url_base() const { return download_url_base_; }
     const std::string &mongodb_url() const { return mongodb_url_; }

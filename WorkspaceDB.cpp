@@ -592,7 +592,7 @@ std::string WorkspaceDBQuery::insert_download_for_object(const boost::json::stri
     
     if (meta.shockurl.empty())
     {
-	qry << "file_path" << db_.config().filesystem_path_for_object(path);
+	qry << "file_path" << db_.config().filesystem_path_for_object(path).native();
     }
     else
     {
@@ -646,7 +646,7 @@ bool WorkspaceDBQuery::lookup_download(const std::string &key, std::string &name
     }
 }
 
-ObjectMeta WorkspaceDBQuery::create_workspace_object(const ObjectToCreate &tc)
+ObjectMeta WorkspaceDBQuery::create_workspace_object(const ObjectToCreate &tc, const std::string &owner)
 {
     ObjectMeta meta;
     std::cerr << "create " << tc << " " << tc.parsed_path << "\n";
@@ -659,14 +659,28 @@ ObjectMeta WorkspaceDBQuery::create_workspace_object(const ObjectToCreate &tc)
     qry << "creation_date" << tc.creation_time_str();
 
     builder::stream::document user_metadata;
+    builder::stream::document auto_metadata;
     for (auto x: tc.user_metadata)
 	user_metadata << x.first << x.second;
-    qry << "user_metadata" << user_metadata;
-    qry << "folder" << (is_folder(tc.type) ? 1 : 0);
+    qry << "metadata" << user_metadata;
     qry << "name" << tc.parsed_path.name;
     qry << "path" << tc.parsed_path.path;
-    // FIX OWNER qry << "owner" <<
+    qry << "type" << tc.type;
+    qry << "owner" << owner;
     qry << "workspace_uuid" << tc.parsed_path.workspace.uuid;
+    qry << "size" << 0;
+    qry << "shock" << 0;
+    if (is_folder(tc.type))
+    {
+	qry << "folder" << 1;
+	
+    }
+    else
+    {
+	qry << "folder" << 0;
+    }
+    qry << "autometadata" << auto_metadata;
+    
     
     std::cerr << bsoncxx::to_json(qry.view()) << "\n";
 /*

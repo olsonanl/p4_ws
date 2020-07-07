@@ -4,6 +4,33 @@
 #include <iostream>
 #include <boost/json/array.hpp>
 
+inline std::string format_time(const std::tm &time)
+{
+    char tmstr[256];
+    std::strftime(tmstr, sizeof(tmstr), "%Y-%m-%dT%H:%M:%SZ", &time);
+    return tmstr;
+}
+			      
+inline std::tm current_time()
+{
+    std::time_t t = std::time(nullptr);
+    std::tm *tm = std::gmtime(&t);
+    if (tm)
+	return *tm;
+    else
+	throw std::runtime_error("error calling gmtime");
+}
+
+inline bool is_empty_time(const std::tm &time)
+{
+    return time.tm_year == 0 &&
+	time.tm_mon == 0 &&
+	time.tm_mday == 0 &&
+	time.tm_hour == 0 &&
+	time.tm_min == 0 &&
+	time.tm_sec == 0;
+}
+
 enum class WSPermission : char
 {
     invalid = 0,
@@ -250,11 +277,10 @@ struct ObjectToCreate
     }
 
     std::string creation_time_str() const {
-	char tmstr[256];
-	std::strftime(tmstr, sizeof(tmstr), "%Y-%m-%dT%H:%M:%SZ", &creation_time);
-	return tmstr;
+	return format_time(creation_time);
     }
 };
+
 
 inline std::ostream &operator<<(std::ostream &os, const std::map<std::string, std::string> &m)
 {

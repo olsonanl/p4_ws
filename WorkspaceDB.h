@@ -84,7 +84,7 @@ public:
      * We allocate the object UUID here.
      */
     
-    ObjectMeta create_workspace_object(const ObjectToCreate &tc);
+    ObjectMeta create_workspace_object(const ObjectToCreate &tc, const std::string &owner);
 
 };
 

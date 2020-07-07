@@ -148,11 +148,13 @@ include $(TOP_DIR)/tools/Makefile.common.rules
 
 HTTPServer.o: HTTPServer.h Logging.h ServiceDispatcher.h JSONRPC.h
 HTTPServer.o: WorkspaceErrors.h DispatchContext.h AuthToken.h
+HTTPServer.o: WorkspaceService.h WorkspaceTypes.h WorkspaceDB.h parse_url.h
+HTTPServer.o: Shock.h
 Logging.o: Logging.h
 p4x-workspace.o: HTTPServer.h Logging.h ServiceDispatcher.h JSONRPC.h
 p4x-workspace.o: WorkspaceErrors.h DispatchContext.h AuthToken.h
-p4x-workspace.o: WorkspaceTypes.h WorkspaceService.h WorkspaceState.h
-p4x-workspace.o: SigningCerts.h /usr/include/openssl/bio.h
+p4x-workspace.o: WorkspaceService.h WorkspaceTypes.h WorkspaceDB.h
+p4x-workspace.o: WorkspaceState.h SigningCerts.h /usr/include/openssl/bio.h
 p4x-workspace.o: /usr/include/openssl/e_os2.h
 p4x-workspace.o: /usr/include/openssl/opensslconf.h
 p4x-workspace.o: /usr/include/openssl/opensslconf-x86_64.h
@@ -195,10 +197,9 @@ p4x-workspace.o: /usr/include/asm-generic/errno.h
 p4x-workspace.o: /usr/include/asm-generic/errno-base.h
 p4x-workspace.o: /usr/include/openssl/conf.h WorkspaceConfig.h
 p4x-workspace.o: ServiceConfig.h Shock.h parse_url.h UserAgent.h Base64.h
-p4x-workspace.o: WorkspaceDB.h RootCertificates.h
-p4x-workspace.o: /usr/include/openssl/x509v3.h
+p4x-workspace.o: RootCertificates.h /usr/include/openssl/x509v3.h
 ServiceConfig.o: ServiceConfig.h
-Shock.o: Shock.h AuthToken.h parse_url.h
+Shock.o: Shock.h AuthToken.h parse_url.h WorkspaceErrors.h
 ssl.o: AuthToken.h SigningCerts.h /usr/include/openssl/bio.h
 ssl.o: /usr/include/openssl/e_os2.h /usr/include/openssl/opensslconf.h
 ssl.o: /usr/include/openssl/opensslconf-x86_64.h /usr/include/stdio.h

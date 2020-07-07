@@ -3,6 +3,7 @@
 #include "WorkspaceConfig.h"
 #include "WorkspaceState.h"
 
+#include <boost/filesystem/fstream.hpp>
 #include <boost/lexical_cast.hpp>
 
 namespace json = boost::json;
@@ -120,18 +121,46 @@ void WorkspaceService::method_create(const JsonRpcRequest &req, JsonRpcResponse 
 				     DispatchContext &dc, int &http_code)
 {
     json::array objects;
-    std::string permission;
+    std::string permission, owner;
     auto &cfg = shared_state_.config();
-    bool createUploadNodes, downloadFromLinks;
+    bool createUploadNodes, downloadFromLinks, overwrite;
     try {
 	auto input = req.params().at(0).as_object();
 	objects = input.at("objects").as_array();
 	createUploadNodes = object_at_as_bool(input, "createUploadNodes");
 	downloadFromLinks = object_at_as_bool(input, "downloadFromLinks");
+	overwrite = object_at_as_bool(input, "overwrite");
 	permission = object_at_as_string(input, "permission", "n");
 	
 	if (object_at_as_bool(input, "adminmode"))
 	    dc.admin_mode = cfg.user_is_admin(dc.token.user());
+
+	/*
+	 * Determine owner of new objects. If we have setowner passed in,
+	 * we have to be an admin. If not an admin, flag error.
+	 * Otherwise owner is set to the setowner value.
+	 *
+	 * If setowner not set, the owner is the user present on the token.
+	 * This is an authentication-required method so we will have a token.
+	 */
+       
+	auto o = input.find("setowner");
+	if (o != input.end())
+	{
+	    if (!dc.admin_mode)
+	    {
+		BOOST_LOG_SEV(dc.lg_, wslog::debug) << "setowner without admin mode";
+		resp.set_error(-32602, "Setowner requested without valid admin");
+		http_code = 500;
+		return;
+	    }
+	    owner = o->value().as_string().c_str();
+	}
+	else
+	{
+	    owner = dc.token.user();
+	}
+		
     } catch (std::invalid_argument e) {
 	BOOST_LOG_SEV(dc.lg_, wslog::debug) << "error parsing: " << e.what() << "\n";
 	resp.set_error(-32602, "Invalid request parameters");
@@ -163,21 +192,8 @@ void WorkspaceService::method_create(const JsonRpcRequest &req, JsonRpcResponse 
 	    /*
 	     * If creation time wasn't specified, use the current time.
 	     */
-	    if (tc.creation_time.tm_year == 0 &&
-		tc.creation_time.tm_mon == 0 &&
-		tc.creation_time.tm_mday == 0 &&
-		tc.creation_time.tm_hour == 0 &&
-		tc.creation_time.tm_min == 0 &&
-		tc.creation_time.tm_sec == 0)
-	    {
-		std::time_t t = std::time(nullptr);
-		std::tm *tm = std::gmtime(&t);
-		if (tm)
-		    tc.creation_time = *tm;
-		else
-		    BOOST_LOG_SEV(dc.lg_, wslog::error) << "std::gmtime returned null";
-		    
-	    }
+	    if (is_empty_time(tc.creation_time))
+		tc.creation_time = current_time();
 		
 	    to_create.emplace_back(tc);
 	} catch (std::exception e) {
@@ -195,19 +211,20 @@ void WorkspaceService::method_create(const JsonRpcRequest &req, JsonRpcResponse 
     
     json::array output;
     db_.run_in_sync_thread(dc,
-		      [this, &dc, &permission, createUploadNodes, downloadFromLinks,
-		       &to_create, &output]
-		      (std::unique_ptr<WorkspaceDBQuery> qobj_ptr) 
-			  {
-			      WorkspaceDBQuery &qobj = *qobj_ptr;
-			      for (auto tc: to_create)
-			      {
-				  json::value val;
-				  process_create(qobj, dc, tc, val,
-						 permission, createUploadNodes, downloadFromLinks);
-				  output.emplace_back(val);
-			      }
-			  });
+			   [this, &dc, &permission,
+			    createUploadNodes, downloadFromLinks, &owner, overwrite,
+			    &to_create, &output]
+			   (std::unique_ptr<WorkspaceDBQuery> qobj_ptr) 
+			       {
+				   WorkspaceDBQuery &qobj = *qobj_ptr;
+				   for (auto tc: to_create)
+				   {
+				       json::value val;
+				       process_create(qobj, dc, tc, val,
+						      permission, createUploadNodes, downloadFromLinks, overwrite,owner);
+				       output.emplace_back(val);
+				   }
+			       });
 
     resp.result().emplace_back(output);
     BOOST_LOG_SEV(dc.lg_, wslog::debug) << output << "\n";
@@ -223,7 +240,8 @@ void WorkspaceService::method_create(const JsonRpcRequest &req, JsonRpcResponse 
  */
 void WorkspaceService::process_create(WorkspaceDBQuery & qobj, DispatchContext &dc,
 				      ObjectToCreate &to_create, boost::json::value &ret_value,
-				      const std::string &permission, bool createUploadNodes, bool downloadFromLinks)
+				      const std::string &permission, bool createUploadNodes, bool downloadFromLinks,
+				      bool overwrite, const std::string &owner)
 {
     std::cerr << "Create: " << to_create << "\n";
     to_create.parsed_path = qobj.parse_path(to_create.path);
@@ -334,7 +352,7 @@ void WorkspaceService::process_create(WorkspaceDBQuery & qobj, DispatchContext &
 	else
 	{
 	    // We are creating a new object.
-	    ObjectMeta created = qobj.create_workspace_object(to_create);
+	    ObjectMeta created = qobj.create_workspace_object(to_create, owner);
 	    ret_value = created.serialize();
 	    return;
 	}
@@ -517,9 +535,9 @@ void WorkspaceService::method_get(const JsonRpcRequest &req, JsonRpcResponse &re
 		if (meta.shockurl.empty())
 		{
 		    // We may want to move file I/O into a file I/O thread pool
-		    const std::string &fs_path = shared_state_.config().filesystem_path_for_object(path);
+		    const boost::filesystem::path &fs_path = shared_state_.config().filesystem_path_for_object(path);
 		    std::cerr << "retrieve data from " << fs_path << "\n";
-		    std::ifstream f(fs_path);
+		    boost::filesystem::ifstream f(fs_path);
 		    if (f)
 		    {
 			std::ostringstream ss;

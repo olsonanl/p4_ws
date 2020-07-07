@@ -77,7 +77,8 @@ private:
 
     void process_create(WorkspaceDBQuery & qobj, DispatchContext &dc,
 			ObjectToCreate &to_create, boost::json::value &ret_value,
-			const std::string &permission, bool createUploadNodes, bool downloadFromLinks);
+			const std::string &permission, bool createUploadNodes, bool downloadFromLinks, bool overwrite,
+			const std::string &setowner);
     void process_ls(std::unique_ptr<WorkspaceDBQuery> qobj,
 		    DispatchContext &dc, boost::json::array &paths, boost::json::object &output,
 		    bool excludeDirectories, bool excludeObjects, bool recursive, bool fullHierachicalOutput);

@@ -1,16 +1,9 @@
 #include "WorkspaceService.h"
 #include "WorkspaceConfig.h"
 
-std::string WorkspaceConfig::filesystem_path_for_object(const WSPath &obj)
+boost::filesystem::path WorkspaceConfig::filesystem_path_for_object(const WSPath &obj)
 {
-    std::string res = filesystem_base();
-    res += "/P3WSDB/";
-    res += obj.workspace.owner;
-    res += "/";
-    res += obj.workspace.name;
-    res += "/";
-    res += obj.path;
-    res += "/";
-    res += obj.name;
+    boost::filesystem::path res = filesystem_base() / "P3WSDB"
+	/ obj.workspace.owner / obj.workspace.name / obj.path / obj.name;
     return res;
 }

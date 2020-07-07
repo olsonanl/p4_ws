@@ -15,7 +15,7 @@ my $ua = LWP::UserAgent->new();
 my $url = 'http://holly:12312/api';
 
 test_create($ua, $url, $token);
-#test_get_download_url($ua, $url, $token);
+test_get_download_url($ua, $url, $token);
 
 sub test_get_download_url
 {
@@ -55,7 +55,8 @@ sub test_create
     {
 	test_call($ua, $url, $token,
 		  "Workspace.create",
-		  [{objects => [$obj] }]);
+		  [{objects => [$obj],  }]);
+#		  [{objects => [$obj], setowner => "dahlia", adminmode=>1 }]);
     }
 
 }
