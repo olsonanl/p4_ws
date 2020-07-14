@@ -30,6 +30,7 @@
 // namespace http = beast::http;           // from <boost/beast/http.hpp>
 namespace net = boost::asio;            // from <boost/asio.hpp>
 // using tcp = boost::asio::ip::tcp;       // from <boost/asio/ip/tcp.hpp>
+namespace fs = boost::filesystem;
 
 using bsoncxx::builder::basic::kvp;
 namespace builder = bsoncxx::builder;
@@ -61,13 +62,19 @@ inline std::string mongo_user_encode(const std::string& in)
 
 static std::string get_stringish(const bsoncxx::document::element &elt)
 {
+    long lval {};
+    int ival {};
     switch (elt.type())
     {
     case bsoncxx::type::k_utf8:
 	return static_cast<std::string>(elt.get_utf8().value);
 
     case bsoncxx::type::k_int64:
-	long ival = elt.get_int64().value;
+	lval = elt.get_int64().value;
+	return std::to_string(lval);
+
+    case bsoncxx::type::k_int32:
+	ival = elt.get_int32().value;
 	return std::to_string(ival);
     }
 
@@ -95,7 +102,11 @@ static std::map<std::string, std::string> get_map(const bsoncxx::document::view 
 {
     std::map<std::string, std::string> map;
 
-    auto val = doc[key];
+    auto iter = doc.find(key);
+    if (iter == doc.end())
+	return map;
+	    
+    const bsoncxx::document::element &val = *iter;
 
     if (val.type() == bsoncxx::type::k_document)
     {
@@ -113,10 +124,11 @@ static std::map<std::string, WSPermission> get_perm_map(const bsoncxx::document:
 {
     std::map<std::string, WSPermission> map;
 
-    auto val = doc[key];
-
-    if (!val)
+    auto iter = doc.find(key);
+    if (iter == doc.end())
 	return map;
+	    
+    const bsoncxx::document::element &val = *iter;
 
     if (val.type() == bsoncxx::type::k_document)
     {
@@ -130,15 +142,24 @@ static std::map<std::string, WSPermission> get_perm_map(const bsoncxx::document:
     return map;
 }
 
+/*
+ * it really gets an int32 too
+ */
 static long get_int64(const bsoncxx::document::view &doc, const std::string &key)
 {
     long v = {};
 
-    auto val = doc[key];
+    auto iter = doc.find(key);
+    if (iter == doc.end())
+	return v;
+	    
+    const bsoncxx::document::element &val = *iter;
+
     if (val.type() == bsoncxx::type::k_int64)
-    {
 	v = static_cast<long>(val.get_int64().value);
-    }
+    else if (val.type() == bsoncxx::type::k_int32)
+	v = static_cast<long>(val.get_int32().value);
+
     return v;
 }
 
@@ -146,7 +167,12 @@ static std::tm get_tm(const bsoncxx::document::view &doc, const std::string &key
 {
     std::tm v = {};
 
-    auto val = doc[key];
+    auto iter = doc.find(key);
+    if (iter == doc.end())
+	return v;
+	    
+    const bsoncxx::document::element &val = *iter;
+
     if (val.type() == bsoncxx::type::k_utf8)
     {
 	std::string str = static_cast<std::string>(val.get_utf8().value);
@@ -155,37 +181,6 @@ static std::tm get_tm(const bsoncxx::document::view &doc, const std::string &key
     }
     return v;
 }
-
-#if 0
-WorkspaceDB::WorkspaceDB(const std::string &uri, int threads, const std::string &db_name)
-    : db_name_(db_name)
-    , uri_(uri)
-    , pool_(uri_)
-    , thread_pool_(threads)
-    , wslog::LoggerBase("wsdb")
-{
-#if 0
-    /* howto. */
-
-    mongocxx::pool::entry c = pool_.acquire();
-    mongocxx::database db = (*c)["WorkspaceBuild"];
-    mongocxx::collection coll = db["workspaces"];
-
-    std::vector<bsoncxx::document::value> v;
-
-    {
-	mongocxx::cursor cursor = coll.find({});
-	for (bsoncxx::document::view doc : cursor) {
-	    //bsoncxx::document::value sdoc(doc);
-	    v.emplace_back(doc);
-	    //std::cout << bsoncxx::to_json(doc) << "\n";
-	}
-    }
-    for (auto i = 0; i < std::min(5LU, v.size()); i++)
-	std::cout << bsoncxx::to_json(v[i]) << "\n";
-#endif   
-}
-#endif
 
 bool WorkspaceDB::init_database(const std::string &uri, int threads, const std::string &db_name)
 {
@@ -197,12 +192,9 @@ bool WorkspaceDB::init_database(const std::string &uri, int threads, const std::
 
     // Start up our sync thread
     sync_thread_ = std::thread([this]() {
-	std::cerr << "starting sync thread " << std::this_thread::get_id() << "\n";
 	net::executor_work_guard<net::io_context::executor_type> guard
 	    = net::make_work_guard(sync_ioc_);
 	sync_ioc_.run(); 
-
-	std::cerr << "exiting sync thread " << std::this_thread::get_id() << "\n";
     });
        
     return true;
@@ -306,8 +298,6 @@ void WorkspaceDBQuery::populate_workspace_from_db_obj(WSWorkspace &ws, const bso
     auto perm = obj["global_permission"];
     auto all_perms = get_perm_map(obj, "permissions");
 
-    BOOST_LOG_SEV(lg_, wslog::debug) << "populate "<< ws << "from obj " << bsoncxx::to_json(obj);
-
     ws.uuid = static_cast<std::string>(uuid.get_utf8().value);
     ws.global_permission = to_permission(perm.get_utf8().value[0]);
 
@@ -357,8 +347,6 @@ void WorkspaceDBQuery::populate_workspace_from_db(WSWorkspace &ws)
     auto &obj = *ent;
 
     populate_workspace_from_db_obj(ws, obj);
-
-    BOOST_LOG_SEV(lg_, wslog::debug) << "obj: " << bsoncxx::to_json(obj) << "\n";
 
     ent++;
     if (ent != cursor.end())
@@ -492,7 +480,6 @@ std::vector<ObjectMeta> WorkspaceDBQuery::list_objects(const WSPath &path, bool 
     if (recursive)
     {
 	std::string regex_str = "^" + path.full_path();
-	std::cerr << "RECUR " << path << "'" << regex_str << "'\n";
         auto regex = bsoncxx::types::b_regex(regex_str);
 	qry.append(kvp("path", regex));
     }
@@ -501,7 +488,6 @@ std::vector<ObjectMeta> WorkspaceDBQuery::list_objects(const WSPath &path, bool 
 	qry.append(kvp("path", path.full_path()));
     }
     auto cursor = coll.find(qry.view());
-    BOOST_LOG_SEV(lg_, wslog::debug) << "qry: " << bsoncxx::to_json(qry.view()) << "\n";
 
     std::vector<ObjectMeta> meta_list;
     for (auto ent = cursor.begin(); ent != cursor.end(); ent++)
@@ -551,7 +537,7 @@ std::vector<ObjectMeta> WorkspaceDBQuery::list_workspaces(const std::string &own
     qry << "$or" << terms
 	<< builder::concatenate(is_owner.view());
     
-    BOOST_LOG_SEV(lg_, wslog::debug) << "qry: " << bsoncxx::to_json(qry.view()) << "\n";
+    //BOOST_LOG_SEV(lg_, wslog::debug) << "qry: " << bsoncxx::to_json(qry.view()) << "\n";
     auto cursor = coll.find(qry.view());
 
     for (auto ent = cursor.begin(); ent != cursor.end(); ent++)
@@ -616,7 +602,7 @@ std::string WorkspaceDBQuery::insert_download_for_object(const boost::json::stri
 	}
     }
     coll.insert_one(qry.view());
-    BOOST_LOG_SEV(lg_, wslog::debug) << "QRY: " << bsoncxx::to_json(qry.view());
+    // BOOST_LOG_SEV(lg_, wslog::debug) << "QRY: " << bsoncxx::to_json(qry.view());
 
     return key;
 }
@@ -632,7 +618,6 @@ bool WorkspaceDBQuery::lookup_download(const std::string &key, std::string &name
     if (res)
     {
 	auto obj = res->view();
-	std::cerr << "Found: " << bsoncxx::to_json(res->view()) << "\n";
 	name = get_string(obj, "name");
 	size = obj["size"].get_int64().value;
 	shock_node = get_string(obj, "shock_node");
@@ -646,16 +631,63 @@ bool WorkspaceDBQuery::lookup_download(const std::string &key, std::string &name
     }
 }
 
+std::string WorkspaceDBQuery::create_workspace(const ObjectToCreate &tc)
+{
+    auto &cfg = db_.config();
+    auto &ws = tc.parsed_path.workspace;
+
+    // Create the top of the hierarchy on disk
+    auto path = cfg.filesystem_path_for_workspace(ws);
+    boost::system::error_code ec;
+    fs::create_directory(path, ec);
+    if (ec)
+    {
+	BOOST_LOG_SEV(lg_, wslog::error) << "create_direcotry " << path << " failed: " << ec.message();
+	return "";
+    }
+
+    auto coll = (*client_)[db_.db_name()]["workspaces"];
+    builder::stream::document qry;
+
+    boost::uuids::uuid uuidobj = (*(db_.uuidgen()))();
+    std::string uuid = boost::lexical_cast<std::string>(uuidobj);
+
+    qry << "uuid" << uuid;
+    qry << "creation_date" << tc.creation_time_str();
+    qry << "name" << ws.name;
+    qry << "owner" << ws.owner;
+    qry << "global_permission" << to_string(ws.global_permission);
+
+    builder::stream::document permissions;
+    qry << "permissions" << permissions;
+
+    bsoncxx::document::value qry_doc = qry << builder::stream::finalize;
+
+    auto res = coll.insert_one(qry_doc.view());
+    if (res)
+    {
+	BOOST_LOG_SEV(lg_, wslog::debug) << "Inserted  ws " << res->result().inserted_count() << " "
+		  << res->inserted_id().get_oid().value.to_string() << "\n";
+    }
+    else
+    {
+	BOOST_LOG_SEV(lg_, wslog::error) << "failed to insert workspace doc: " << bsoncxx::to_json(qry_doc.view());
+	uuid = "";
+    }
+
+    return uuid;
+}
+
 ObjectMeta WorkspaceDBQuery::create_workspace_object(const ObjectToCreate &tc, const std::string &owner)
 {
     ObjectMeta meta;
-    std::cerr << "create " << tc << " " << tc.parsed_path << "\n";
+
+    auto &cfg = db_.config();
 
     auto coll = (*client_)[db_.db_name()]["objects"];
     builder::stream::document qry;
 
-    boost::uuids::uuid uuidobj = (*(db_.uuidgen()))();
-    qry << "uuid" << boost::lexical_cast<std::string>(uuidobj);
+    qry << "uuid" << tc.uuid;
     qry << "creation_date" << tc.creation_time_str();
 
     builder::stream::document user_metadata;
@@ -668,35 +700,93 @@ ObjectMeta WorkspaceDBQuery::create_workspace_object(const ObjectToCreate &tc, c
     qry << "type" << tc.type;
     qry << "owner" << owner;
     qry << "workspace_uuid" << tc.parsed_path.workspace.uuid;
-    qry << "size" << 0;
-    qry << "shock" << 0;
     if (is_folder(tc.type))
     {
+	auto path = cfg.filesystem_path_for_object(tc.parsed_path);
+
+	qry << "size" << 0;
+	qry << "shock" << 0;
 	qry << "folder" << 1;
-	
+	boost::system::error_code ec;
+	fs::create_directory(path, ec);
+	if (ec)
+	{
+	    BOOST_LOG_SEV(lg_, wslog::error) << "create_direcotry " << path << " failed: " << ec.message();
+	    return meta;
+	}
     }
     else
     {
 	qry << "folder" << 0;
+
+	// If we don't have a shock node, write the passed-in data to a file in the fs.
+
+	if (tc.shock_node.empty())
+	{
+	    qry << "shock" << 0;
+
+	    auto path = cfg.filesystem_path_for_object(tc.parsed_path);
+	    auto dir = path.parent_path();
+	    if (!fs::is_directory(dir))
+	    {
+		BOOST_LOG_SEV(lg_, wslog::error) << "Err: leading path was not created for " << path << "\n";
+	    }
+	    else
+	    {
+		try {
+		    fs::ofstream f;
+		    f.exceptions(fs::ofstream::failbit);
+		    f.open(path);
+		    f.write(tc.object_data.data(), tc.object_data.size());
+		    f.close();
+		    long sz = fs::file_size(path);
+		    qry << "size" << sz;
+		} catch (std::ios_base::failure &e) {
+		    BOOST_LOG_SEV(lg_, wslog::error) << "error writing data to " << path << ": " << e.what() << " " << std::strerror(errno);
+		    return meta;
+		}
+	    }
+	}
+	else
+	{
+	    qry << "size" << 0;
+	    qry << "shock" << 1;
+	    qry << "shocknode" << tc.shock_node;
+	}
+	
     }
     qry << "autometadata" << auto_metadata;
     
+    bsoncxx::document::value qry_doc = qry << builder::stream::finalize;
+
+    std::cerr << bsoncxx::to_json(qry_doc.view()) << "\n";
     
-    std::cerr << bsoncxx::to_json(qry.view()) << "\n";
-/*
-    auto res = coll.find_one(qry.view());
+    auto res = coll.insert_one(qry_doc.view());
     if (res)
     {
-	auto obj = res->view();
-	std::cerr << "Found: " << bsoncxx::to_json(res->view()) << "\n";
-	name = get_string(obj, "name");
-	size = obj["size"].get_int64().value;
-	shock_node = get_string(obj, "shock_node");
-	token = get_string(obj, "token");
-	file_path = get_string(obj, "file_path");
-	return true;
+	BOOST_LOG_SEV(lg_, wslog::debug) << "Inserted obj " << res->result().inserted_count() << " "
+		  << res->inserted_id().get_oid().value.to_string() << "\n";
+	meta = lookup_object_meta(tc.parsed_path);
     }
-*/  
+    else
+    {
+	BOOST_LOG_SEV(lg_, wslog::error) << "failed to insert workspace doc: " << bsoncxx::to_json(qry_doc.view());
+    }
 
-return meta;
+    return meta;
+}
+
+void WorkspaceDBQuery::set_object_size(const std::string &object_id, size_t size)
+{
+    std::cerr << "set " << object_id << " to size " << size << "\n";
+    auto coll = (*client_)[db_.db_name()]["objects"];
+    builder::stream::document filter, set;
+
+    filter << "uuid" << object_id;
+    set << "$set"
+	<< builder::stream::open_document << "size" << static_cast<long>(size) << builder::stream::close_document;
+    std::cerr << bsoncxx::to_json(filter.view())
+	      << bsoncxx::to_json(set.view());
+
+    bsoncxx::stdx::optional<mongocxx::result::update> result = coll.update_one(filter.view(), set.view());
 }

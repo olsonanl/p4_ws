@@ -5,12 +5,19 @@
 #include <memory>
 #include <iostream>
 #include <map>
+#include <set>
+#include <boost/chrono/include.hpp>
+
 #include <boost/asio/spawn.hpp>
+#include <boost/asio/ssl.hpp>
+
 #include <boost/json/traits.hpp>
 #include "WorkspaceErrors.h"
 #include "DispatchContext.h"
 #include "WorkspaceTypes.h"
 #include "Logging.h"
+#include "PendingUpload.h"
+#include "Shock.h"
 
 #include "JSONRPC.h"
 
@@ -25,6 +32,8 @@ class WorkspaceService
 {
 public:
 private:
+    boost::asio::io_context &ioc_;
+    
     typedef void (WorkspaceService::* ptr_to_method)(const JsonRpcRequest &req,
 						     JsonRpcResponse &resp,
 						     DispatchContext &dc,
@@ -37,6 +46,7 @@ private:
 	required
     };
     
+
     struct Method
     {
 	ptr_to_method method;
@@ -48,19 +58,63 @@ private:
     WorkspaceDB &db_;
     WorkspaceState &shared_state_;
 
+    boost::asio::ssl::context &ssl_ctx_;
+
+    /**
+     * The service maintains an I/O context to host a single thread
+     * used to serialize access to Shock and to the Shock
+     * bookkeeping routines.
+     */
+    boost::asio::io_context shock_ioc_;
+
+    /**
+     * The Shock thread.
+     */
+    std::thread shock_thread_;
+
+    /**
+     * Set of pending Shock uploads. Entries are added here when
+     * objects are created with createUploadNodes is specified.
+     * The check_shock_ timer is used to periodically check
+     * the Shock server to see if a file has been added.
+     */
+    std::map<std::string, PendingUpload> pending_uploads_;
+
+    /**
+     * Asio timer used to monitor the Shock pending uploads.
+     */
+    boost::asio::deadline_timer timer_;
+
+    Shock shock_;
+
 public:
-    WorkspaceService(WorkspaceDB &db, WorkspaceState &state)
-	: wslog::LoggerBase("wssvc")
-	, db_(db)
-	, shared_state_(state) {
-	init_dispatch();
+    WorkspaceService(boost::asio::io_context &ioc, boost::asio::ssl::context &ssl_ctx,
+		     WorkspaceDB &db, WorkspaceState &state);
+    ~WorkspaceService() {
+	BOOST_LOG_SEV(lg_, wslog::debug) << "destroy WorkspaceService";
+	timer_.cancel_one();
+	shock_ioc_.stop();
+	
+	BOOST_LOG_SEV(lg_, wslog::debug) << "join shock thread";
+	shock_thread_.join();
+	BOOST_LOG_SEV(lg_, wslog::debug) << "WorkspaceService done";
     }
+    
 
     void dispatch(const JsonRpcRequest &req, JsonRpcResponse &resp, DispatchContext &dc, int &http_code);
     WorkspaceState &shared_state() { return shared_state_; }
     WorkspaceDB &db() { return db_; }
     
 private:
+
+    void run_timer(boost::asio::yield_context yield);
+
+    /**
+     * Check this pending upload to see if it has been completed.
+     * Updates the size and valid fields on the upload if it has.
+     */
+    void check_pending_upload(PendingUpload &p, boost::asio::yield_context yield);
+
     void init_dispatch() {
 	method_map_.emplace(std::make_pair("create",  Method { &WorkspaceService::method_create, Authentication::required }));
 	method_map_.emplace(std::make_pair("ls",  Method { &WorkspaceService::method_ls, Authentication::optional }));

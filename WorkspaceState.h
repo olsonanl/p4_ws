@@ -18,15 +18,17 @@
 class WorkspaceState : public std::enable_shared_from_this<WorkspaceState>
 {
     SigningCerts certs_;
-    WorkspaceConfig config_;
+    WorkspaceConfig &config_;
     Shock shock_;
     UserAgent user_agent_;
     AuthToken ws_auth_;
 
 public:
-    WorkspaceState(Shock &&shock,
+    WorkspaceState(WorkspaceConfig &config,
+		   Shock &&shock,
 		   UserAgent &&user_agent)
-	: shock_(std::move(shock))
+	: config_(config)
+	, shock_(std::move(shock))
 	, user_agent_(std::move(user_agent)) {
     }
     ~WorkspaceState() { std::cerr << "destroy  WorkspaceState\n"; }

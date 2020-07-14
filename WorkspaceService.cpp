@@ -3,10 +3,20 @@
 #include "WorkspaceConfig.h"
 #include "WorkspaceState.h"
 
+#include <experimental/map>
+
+#include <boost/bind/bind.hpp>
 #include <boost/filesystem/fstream.hpp>
 #include <boost/lexical_cast.hpp>
+#include <boost/uuid/uuid_io.hpp>
 
+namespace beast = boost::beast;         // from <boost/beast.hpp>
+namespace http = beast::http;           // from <boost/beast/http.hpp>
+namespace net = boost::asio;            // from <boost/asio.hpp>
+using tcp = boost::asio::ip::tcp;       // from <boost/asio/ip/tcp.hpp>
 namespace json = boost::json;
+namespace ssl = boost::asio::ssl;       // from <boost/asio/ssl.hpp>
+
 
 bool value_as_bool(const json::value &v)
 {
@@ -66,6 +76,132 @@ std::string object_at_as_string(const json::object &obj, const json::string &key
     {
 	return default_value;
     }
+}
+
+WorkspaceService::WorkspaceService(boost::asio::io_context &ioc, boost::asio::ssl::context &ssl_ctx,
+				   WorkspaceDB &db, WorkspaceState &state)
+    : wslog::LoggerBase("wssvc")
+    , ioc_(ioc)
+    , db_(db)
+    , shared_state_(state)
+    , ssl_ctx_(ssl_ctx)
+    , shock_ioc_{}
+    , timer_(shock_ioc_)
+    , shock_(shock_ioc_, ssl_ctx, state.config().shock_server()) {
+    
+    init_dispatch();
+
+    /*
+     * Start our Shock processing thread. We have a private io_context
+     * we use to serialize access to the Shock service for the purpose
+     * of atomically (from the WS service point of view) updating and querying
+     * metadata.
+     */
+
+    shock_thread_ = std::thread([this]() {
+	std::cerr << "starting WS shock thread " << std::this_thread::get_id() << "\n";
+	net::executor_work_guard<net::io_context::executor_type> guard
+	    = net::make_work_guard(shock_ioc_);
+	shock_ioc_.run(); 
+
+	std::cerr << "exiting shock thread " << std::this_thread::get_id() << "\n";
+    });
+
+    /*
+     * Spawn a coroutine to manage the WS objects for which we
+     * need Shock metadata updates.
+     */
+
+    boost::asio::spawn(shock_ioc_, boost::bind(&WorkspaceService::run_timer, this, boost::placeholders::_1));
+}
+
+
+void WorkspaceService::run_timer(boost::asio::yield_context yield)
+{
+    boost::system::error_code ec;
+    timer_.expires_from_now(boost::posix_time::seconds(5), ec);
+
+    if (ec)
+    {
+	std::cerr << "expires_from_now failed: " << ec.message() << "\n";
+	return;
+    }
+    while (1)
+    {
+	timer_.async_wait(yield[ec]);
+	if (ec)
+	{
+	    std::cerr << "wait failed: " << ec.message() << "\n";
+	    return;
+	}
+	int n_updated = 0;
+	for (auto &up: pending_uploads_)
+	{
+	    check_pending_upload(up.second, yield);
+	    if (up.second.updated())
+		n_updated++;
+	}
+
+	/*
+	 * If we have any updated, hand them to the database to
+	 * update the size.
+	 * We create a DispatchContext here using the local shock io_context.
+	 */
+	if (n_updated > 0)
+	{
+	    DispatchContext dc{yield, shock_ioc_, AuthToken(), lg_};
+	    db_.run_in_sync_thread(dc,
+				   [this, &dc]
+				   (std::unique_ptr<WorkspaceDBQuery> qobj_ptr) 
+				       {
+					   WorkspaceDBQuery &qobj = *qobj_ptr;
+
+					   for (auto iter = pending_uploads_.begin(); iter != pending_uploads_.end(); ++iter)
+					   {
+					       auto &up = iter->second;
+					       if (up.updated())
+					       {
+						   qobj.set_object_size(up.object_id(), up.size());
+					       }
+					   }
+				       });
+
+	    // And erase the updated entries.
+	    std::experimental::erase_if(pending_uploads_, [](const auto& item) {
+		return item.second.updated();
+	    });
+	}
+	
+	timer_.expires_from_now(boost::posix_time::seconds(5), ec);
+	if (ec) {
+	    std::cerr << "expires_from_now failed: " << ec.message() << "\n";
+	    return;
+	}
+    }
+}
+
+void WorkspaceService::check_pending_upload(PendingUpload &p, net::yield_context yield)
+{
+    std::cerr << "Checking pending " << p << "\n";
+    json::object node = shock_.get_node(p.auth_token(), p.shock_url(), yield);
+    std::cerr << "shock got " << node << "\n";
+
+    try {
+	auto file = node["file"].as_object();
+	size_t size = file["size"].as_int64();
+	auto ck = file["checksum"].as_object();
+	auto iter = ck.find("md5");
+	if (iter != ck.end())
+	{
+	    // If there is a checksum, the file was uploaded.
+	    // Need to check here in case the file is a zero-length file.
+	    p.set_size(size);
+	    std::cerr << "found checksum " << iter->value().as_string() << "\n";
+	}
+    } catch (std::invalid_argument e) {
+	std::cerr << "error extracting node id: " << e.what() << "\n";
+    }
+    std::cerr << "Done checking pending " << p << "\n";
 }
 
 void WorkspaceService::dispatch(const JsonRpcRequest &req, JsonRpcResponse &resp,
@@ -173,6 +309,9 @@ void WorkspaceService::method_create(const JsonRpcRequest &req, JsonRpcResponse 
 	return;
     }
 
+    // Get the auth token for the owner of the Shock nodes if needed.
+    AuthToken &token = shared_state_.ws_auth(dc.yield);
+
     std::vector<ObjectToCreate> to_create;
     // Validate format of paths before doing any work
     for (auto obj: objects)
@@ -194,7 +333,43 @@ void WorkspaceService::method_create(const JsonRpcRequest &req, JsonRpcResponse 
 	     */
 	    if (is_empty_time(tc.creation_time))
 		tc.creation_time = current_time();
-		
+
+	    /*
+	     * Assign an ID. We do this here so that we can tag the
+	     * generated Shock node with the associated workspace object.
+	     */
+	    boost::uuids::uuid uuidobj = (*(db_.uuidgen()))();
+	    tc.uuid = boost::lexical_cast<std::string>(uuidobj);
+
+	    /*
+	     * We also create the shock node if needed here (where we
+	     * can use the DispatchContext to wait on the asynch operation).
+	     *
+	     * We use the shock thread to add the object to the pending-uploads list.
+	     * This keeps us from having to do any locking on that data structure and
+	     * serializes the updates to it.
+	     */
+
+	    if (createUploadNodes)
+	    {
+		std::string node_id = shared_state_.shock().create_node(token, tc.uuid, dc.yield);
+		std::cerr << "created node " << node_id << "\n";
+		if (node_id.empty())
+		{
+		    BOOST_LOG_SEV(dc.lg_, wslog::error) << "Error creating shock node";
+		    
+		    resp.set_error(-32602, "Error creating shock node");
+		    http_code = 500;
+		    return;
+
+		}
+		tc.shock_node = shared_state_.config().shock_server() + "/node/" + node_id;
+		shared_state_.shock().acl_add_user(tc.shock_node, token, dc.token.user(), dc.yield);
+		boost::asio::post(shock_ioc_, [this, tc, token = dc.token] () {
+		    pending_uploads_.emplace(std::make_pair(tc.uuid, PendingUpload{tc.uuid, tc.shock_node, token}));
+		});
+	    }
+
 	    to_create.emplace_back(tc);
 	} catch (std::exception e) {
 	    BOOST_LOG_SEV(dc.lg_, wslog::debug) << "error parsing: " << e.what() << "\n";
@@ -285,8 +460,16 @@ void WorkspaceService::process_create(WorkspaceDBQuery & qobj, DispatchContext &
 	    return;
 	}
 	std::cerr << "create go for ws portion " << ws << "\n";
+	std::string ws_uuid = qobj.create_workspace(to_create);
+	if (ws_uuid.empty())
+	{
+	    BOOST_LOG_SEV(dc.lg_, wslog::error) << "Error creating workspace";
+	    ret_value.emplace_array();
+	    return;
+	}
+	ws.uuid = ws_uuid;
+	ws.creation_time = to_create.creation_time;
     }
-    
 
     // If we are just requesting the creation of a workspace, we are done.
     if (to_create.parsed_path.is_workspace_path())
@@ -556,7 +739,8 @@ void WorkspaceService::method_get(const JsonRpcRequest &req, JsonRpcResponse &re
 		    // This token needs to be the shock data owner token
 		    AuthToken &token = shared_state_.ws_auth(dc.yield);
 		    std::cerr << "got ws auth " << token << "\n";
-		    shared_state_.shock().acl_add_user(meta.shockurl, token, dc.yield);
+		    if (dc.token.valid())
+			shared_state_.shock().acl_add_user(meta.shockurl, token, dc.token.user(), dc.yield);
 		    std::cerr  << "invoke shock..done\n";
 		}
 	    }
@@ -701,9 +885,11 @@ void WorkspaceService::method_get_download_url(const JsonRpcRequest &req, JsonRp
 
     db_.run_in_thread(dc, work);
 
+    std::string username = dc.token.valid() ? dc.token.user() : ws_auth.user();
+
     for (auto url: shock_urls)
     {
-	shared_state_.shock().acl_add_user(url, dc.token, dc.yield);
+	shared_state_.shock().acl_add_user(url, ws_auth.token(), username, dc.yield);
     }
 
     resp.result().emplace_back(output);

@@ -22,6 +22,7 @@ class WorkspaceConfig
     int mongodb_client_threads_;
     std::string api_root_;
     std::set<std::string> valid_types_;
+    std::string shock_server_;
     
 public:
     WorkspaceConfig()
@@ -51,6 +52,7 @@ public:
 	mongodb_dbname_ = get_string("mongodb-database", "");
 	mongodb_client_threads_ = get_long("mongodb-client-threads", 1);
 
+	shock_server_ = get_string("shock-url");
 	api_root_ = get_string("api-root", "/api");
 
 	std::string types_file = get_string("types-file", "");
@@ -94,12 +96,14 @@ public:
     const boost::filesystem::path &filesystem_base() const { return filesystem_base_; }
 
     boost::filesystem::path filesystem_path_for_object(const WSPath &obj);
+    boost::filesystem::path filesystem_path_for_workspace(const WSWorkspace &ws);
     unsigned long download_lifetime() const { return download_lifetime_; }
     const std::string &download_url_base() const { return download_url_base_; }
     const std::string &mongodb_url() const { return mongodb_url_; }
     const std::string &mongodb_dbname() const { return mongodb_dbname_; }
     int mongodb_client_threads() const { return mongodb_client_threads_; }
     const std::string &api_root()  const { return api_root_; }
+    const std::string &shock_server()  const { return shock_server_; }
 };
 
 

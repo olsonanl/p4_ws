@@ -46,6 +46,7 @@ namespace ws_http_server {
 	WorkspaceService &workspace_service_;
 	Shock &shock_;
 	bool quit_;
+
     public:
 	explicit Server(net::io_context &ioc, std::string api_root, ServiceDispatcher &dispatcher, WorkspaceService &svc, Shock &shock)
 	    : ioc_(ioc)
@@ -54,6 +55,7 @@ namespace ws_http_server {
 	    , workspace_service_(svc)
 	    , shock_(shock)
 	    , quit_(false) {
+
 	}
 	
 	void run(net::ip::address address, unsigned short port, int threads);

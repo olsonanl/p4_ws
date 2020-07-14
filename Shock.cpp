@@ -24,12 +24,14 @@ fail(beast::error_code ec, char const* what)
 }
 
 
-void Shock::request(const std::string &method, const URL &url, const AuthToken &token, boost::asio::yield_context yield)
+void Shock::request(const std::string &method, const URL &url, const AuthToken &token, const std::string &body,
+		    boost::asio::yield_context yield,
+		    std::function<void(boost::json::object)> cb)
 {
     // TODO - perhaps resolver should be local here and part of the strand
     beast::tcp_stream stream(net::make_strand(ioc_));
     beast::flat_buffer buffer;
-    http::request<http::empty_body> req;
+    http::request<http::string_body> req;
     http::response<http::string_body> res;
 
     req.method_string(method);
@@ -37,6 +39,10 @@ void Shock::request(const std::string &method, const URL &url, const AuthToken &
     req.set(http::field::host, url.domain());
     req.set(http::field::user_agent, "p4x-shock");
     req.set(http::field::authorization, "OAuth " + token.token());
+    if (!body.empty())
+	req.set(http::field::content_type, "multipart/form-data; boundary=XXX");
+    req.body() = "--XXX\r\nContent-Disposition: form-data; name=\"attributes_str\"\r\n\r\n" + body + "--XXX\r\n";
+    req.prepare_payload();
 
     boost::system::error_code ec;
     auto res_iter = resolver_.async_resolve(url.domain(), url.port(), yield[ec]);
@@ -66,7 +72,12 @@ void Shock::request(const std::string &method, const URL &url, const AuthToken &
 	auto doc = boost::json::parse(res.body());
 	auto obj = doc.as_object();
 	auto status = obj["status"].as_int64();
-	if (status != 200)
+	if (status == 200)
+	{
+	    if (cb)
+		cb(obj);
+	}
+	else
 	{
 	    auto error = obj["error"];
 	    std::cerr << "error on request: " << error << "\n";
@@ -76,11 +87,13 @@ void Shock::request(const std::string &method, const URL &url, const AuthToken &
     }
 }
 
-void Shock::request_ssl(const std::string &method, const URL &url, const AuthToken &token, boost::asio::yield_context yield)
+void Shock::request_ssl(const std::string &method, const URL &url, const AuthToken &token, const std::string &body,
+			boost::asio::yield_context yield,
+			std::function<void(boost::json::object)> cb)
 {
     beast::ssl_stream<beast::tcp_stream> stream(net::make_strand(ioc_), ssl_ctx_);
     beast::flat_buffer buffer;
-    http::request<http::empty_body> req;
+    http::request<http::string_body> req;
     http::response<http::string_body> res;
 
     if (!SSL_set_tlsext_host_name(stream.native_handle(), url.domain().c_str()))
@@ -89,12 +102,16 @@ void Shock::request_ssl(const std::string &method, const URL &url, const AuthTok
 	std::cerr << ec.message() << "\n";
 	return;
     }
-
+    
     req.method_string(method);
     req.target(url.path_query());
     req.set(http::field::host, url.domain());
     req.set(http::field::user_agent, "p4x-shock");
     req.set(http::field::authorization, "OAuth " + token.token());
+    if (!body.empty())
+	req.set(http::field::content_type, "multipart/form-data; boundary=XXX");
+    req.body() = "--XXX\r\nContent-Disposition: form-data; name=\"attributes_str\"\r\n\r\n" + body + "--XXX";
+    req.prepare_payload();
 
     boost::system::error_code ec;
     auto res_iter = resolver_.async_resolve(url.domain(), url.port(), yield[ec]);
@@ -131,7 +148,12 @@ void Shock::request_ssl(const std::string &method, const URL &url, const AuthTok
 	auto doc = boost::json::parse(res.body());
 	auto obj = doc.as_object();
 	auto status = obj["status"].as_int64();
-	if (status != 200)
+	if (status == 200)
+	{
+	    if (cb)
+		cb(obj);
+	}
+	else
 	{
 	    auto error = obj["error"];
 	    std::cerr << "error on request: " << error << "\n";

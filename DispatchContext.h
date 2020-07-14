@@ -16,6 +16,13 @@ public:
 	, admin_mode(false)
 	, lg_(logger)
     {}
+    DispatchContext(boost::asio::yield_context &y,  boost::asio::io_context &ioc, const AuthToken &t, wslog::logger &logger)
+	: yield(y)
+	, timer(ioc)
+	, token(t)
+	, admin_mode(false)
+	, lg_(logger)
+    {}
 
     
     boost::asio::yield_context yield;

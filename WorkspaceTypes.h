@@ -2,6 +2,8 @@
 #define _WorkspaceTypes_h
 
 #include <iostream>
+#include <iomanip>
+#include <ctime>
 #include <boost/json/array.hpp>
 
 inline std::string format_time(const std::tm &time)
@@ -226,6 +228,8 @@ struct ObjectToCreate
     std::map<std::string, std::string> user_metadata;
     std::string object_data;
     std::tm creation_time;
+    std::string shock_node;
+    std::string uuid;
 
     /**
      * Construct from the input json.

@@ -76,14 +76,20 @@ public:
 			 std::string &shock_node, std::string &token,
 			 std::string &file_path);
 
+    void set_object_size(const std::string &object_id, size_t size);
+    
+    /**
+     * Create a workspace.
+     * We assume here that we have already performed any requisite checks
+     * for overwrites, permission, etc. This just formats and performs the database operation.
+     */
+    std::string create_workspace(const ObjectToCreate &tc);
+
     /**
      * Create a workspace object.
      * We assume here that we have already performed any requisite checks
      * for overwrites, permission, etc. This just formats and performs the database operation.
-     *
-     * We allocate the object UUID here.
      */
-    
     ObjectMeta create_workspace_object(const ObjectToCreate &tc, const std::string &owner);
 
 };
@@ -106,6 +112,7 @@ class WorkspaceDB
      * This is the thread running for the sync_ioc_;
      */
     std::thread sync_thread_;
+
     mongocxx::instance instance_;
 
     WorkspaceConfig &config_;
@@ -119,6 +126,7 @@ public:
 	: wslog::LoggerBase("wsdb")
 	, config_(config)
 	, n_threads_(1) {
+	
     }
 
     ~WorkspaceDB() {

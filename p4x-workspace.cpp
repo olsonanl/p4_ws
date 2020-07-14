@@ -70,6 +70,14 @@ int main(int argc, char *argv[])
 
     net::io_context ioc{threads};
 
+    WorkspaceConfig config;
+    // Parse config
+    if (!config.parse())
+    {
+	std::cerr << "Error parsing workspace configuration\n";
+	return 1;
+    }
+
     // SSL support
     
     ssl::context ssl_ctx{ssl::context::tlsv12_client};
@@ -85,19 +93,12 @@ int main(int argc, char *argv[])
     // Verify the remote server's certificate
     ssl_ctx.set_verify_mode(ssl::verify_peer);
 
-    Shock shock(ioc, ssl_ctx);
+    Shock shock(ioc, ssl_ctx, config.shock_server());
     UserAgent user_agent(ioc, ssl_ctx);
 
     // Create our global state container.
 
-    WorkspaceState global_state { std::move(shock), std::move(user_agent) };
-
-    // Parse config
-    if (!global_state.config().parse())
-    {
-	std::cerr << "Error parsing workspace configuration\n";
-	return 1;
-    }
+    WorkspaceState global_state {config, std::move(shock), std::move(user_agent) };
 
     // Intialize database
 
@@ -107,7 +108,7 @@ int main(int argc, char *argv[])
 		     global_state.config().mongodb_client_threads(),
 		     global_state.config().mongodb_dbname());
     
-    WorkspaceService  workspace_service{ db, global_state };
+    WorkspaceService  workspace_service{ ioc, ssl_ctx, db, global_state };
     ServiceDispatcher dispatcher;
 
     dispatcher.register_service("Workspace",

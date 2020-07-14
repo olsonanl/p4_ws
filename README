@@ -1,0 +1,41 @@
+Deps:
+
+WorkspaceService:
+	Shock
+	WorkspaceDB
+	WS auth retrieval (involves UserAgent)
+	
+
+WorkspaceDB:
+	WorkspaceConfig
+
+ServiceDispatcher:
+	nothing
+
+----
+
+Design points for autometadata processing.
+
+At any point where we know new data is available, need to queue
+the WS object for metadata processing.
+
+If we know a Shock upload node was created, we start a timer?
+to periodically check it for new data.
+
+Want a multithreaded pool to process the AMD data.
+
+Want to keep the set of objects to be processed in nonvolatile storage.
+
+--
+
+Separate concerns of shock upload from AMD processing.
+We can use ASIO timers for the periodic checks as they will not overwhelm.
+Need to map object ID to timer. Or use a single timer with a set of objects to check.
+
+Shock object:
+      std::set<PendingUpload> pending_uploads_
+
+PendingUpload:
+	std::string object_id;
+	std::time creation_time;
+	std::tm last_
