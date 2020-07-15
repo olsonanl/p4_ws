@@ -523,6 +523,10 @@ void WorkspaceService::process_create(WorkspaceDBQuery & qobj, DispatchContext &
 	net::io_context &ioc = shared_state_.ioc();
 	
 	net::deadline_timer completion_timer(ioc);
+
+	/*
+	 * We use a mutex to block the calling thread until the asyncronous operations all complete.
+	 */
 	std::mutex lock;
 	lock.lock();
 	std::string node_id;
@@ -541,15 +545,11 @@ void WorkspaceService::process_create(WorkspaceDBQuery & qobj, DispatchContext &
 		shared_state_.shock().acl_add_user(to_create.shock_node, token, dc.token.user(), yield);
 		boost::asio::post(shock_ioc_, [&lock, this, to_create, dtoken = dc.token ] () {
 		    pending_uploads_.emplace(std::make_pair(to_create.uuid, PendingUpload{to_create.uuid, to_create.shock_node, dtoken}));
-		    std::cerr << "canceling timer " << "\n";
 		    lock.unlock();
-		    std::cerr << "canceling timer..done\n";
 		});
 	    });
-	std::cerr << "wait on completion timer " << "\n";
 	lock.lock();
 	lock.unlock();
-	std::cerr << "wait on completion timer ..done\n";
 	if (node_id.empty())
 	{
 	    BOOST_LOG_SEV(dc.lg_, wslog::error) << "Error creating shock node";
