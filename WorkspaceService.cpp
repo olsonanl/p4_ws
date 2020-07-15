@@ -309,9 +309,6 @@ void WorkspaceService::method_create(const JsonRpcRequest &req, JsonRpcResponse 
 	return;
     }
 
-    // Get the auth token for the owner of the Shock nodes if needed.
-    AuthToken &token = shared_state_.ws_auth(dc.yield);
-
     std::vector<ObjectToCreate> to_create;
     // Validate format of paths before doing any work
     for (auto obj: objects)
@@ -340,35 +337,6 @@ void WorkspaceService::method_create(const JsonRpcRequest &req, JsonRpcResponse 
 	     */
 	    boost::uuids::uuid uuidobj = (*(db_.uuidgen()))();
 	    tc.uuid = boost::lexical_cast<std::string>(uuidobj);
-
-	    /*
-	     * We also create the shock node if needed here (where we
-	     * can use the DispatchContext to wait on the asynch operation).
-	     *
-	     * We use the shock thread to add the object to the pending-uploads list.
-	     * This keeps us from having to do any locking on that data structure and
-	     * serializes the updates to it.
-	     */
-
-	    if (createUploadNodes)
-	    {
-		std::string node_id = shared_state_.shock().create_node(token, tc.uuid, dc.yield);
-		std::cerr << "created node " << node_id << "\n";
-		if (node_id.empty())
-		{
-		    BOOST_LOG_SEV(dc.lg_, wslog::error) << "Error creating shock node";
-		    
-		    resp.set_error(-32602, "Error creating shock node");
-		    http_code = 500;
-		    return;
-
-		}
-		tc.shock_node = shared_state_.config().shock_server() + "/node/" + node_id;
-		shared_state_.shock().acl_add_user(tc.shock_node, token, dc.token.user(), dc.yield);
-		boost::asio::post(shock_ioc_, [this, tc, token = dc.token] () {
-		    pending_uploads_.emplace(std::make_pair(tc.uuid, PendingUpload{tc.uuid, tc.shock_node, token}));
-		});
-	    }
 
 	    to_create.emplace_back(tc);
 	} catch (std::exception e) {
@@ -433,7 +401,9 @@ void WorkspaceService::process_create(WorkspaceDBQuery & qobj, DispatchContext &
     {
 	// WS has to be named.
 	BOOST_LOG_SEV(dc.lg_, wslog::debug) << "no workspace name";
-	ret_value.emplace_array();
+	auto &a = ret_value.emplace_array();
+	a = { nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, "no workspace name" };
+	std::cerr << "created err " << ret_value << "\n";
 	return;
     }
     if (ws.uuid.empty())
@@ -459,7 +429,6 @@ void WorkspaceService::process_create(WorkspaceDBQuery & qobj, DispatchContext &
 	    ret_value.emplace_array();
 	    return;
 	}
-	std::cerr << "create go for ws portion " << ws << "\n";
 	std::string ws_uuid = qobj.create_workspace(to_create);
 	if (ws_uuid.empty())
 	{
@@ -474,72 +443,125 @@ void WorkspaceService::process_create(WorkspaceDBQuery & qobj, DispatchContext &
     // If we are just requesting the creation of a workspace, we are done.
     if (to_create.parsed_path.is_workspace_path())
     {
-	{
-	    // WS already exists; we can just return.
-	    ret_value = qobj.lookup_object_meta(to_create.parsed_path).serialize();
-	    return;
-	}
+	ret_value = qobj.lookup_object_meta(to_create.parsed_path).serialize();
+	return;
     }
-    else
-    {
-	// Validation tests for creation of object
-	
-	if (!qobj.user_has_permission(ws, WSPermission::write))
-	{
-	    BOOST_LOG_SEV(dc.lg_, wslog::debug) << "permission denied on create";
-	    ret_value.emplace_array();
-	    return;
-	}
-	if (!to_create.parsed_path.has_valid_name())
-	{
-	    // Check, but this shouldn't be possible due to the parsing rules.
-	    BOOST_LOG_SEV(dc.lg_, wslog::debug) << "Name has invalid characters";
-	    ret_value.emplace_array();
-	    return;
-	}
-	// Look up object to check for overwrite.
-	ObjectMeta meta = qobj.lookup_object_meta(to_create.parsed_path);
-	std::cerr << "existing obj: " << meta << "\n";
-	    
 
-	if (meta.valid)
+    // Validation tests for creation of object
+	
+    if (!qobj.user_has_permission(ws, WSPermission::write))
+    {
+	BOOST_LOG_SEV(dc.lg_, wslog::debug) << "permission denied on create";
+	ret_value.emplace_array();
+	return;
+    }
+    if (!to_create.parsed_path.has_valid_name())
+    {
+	// Check, but this shouldn't be possible due to the parsing rules.
+	BOOST_LOG_SEV(dc.lg_, wslog::debug) << "Name has invalid characters";
+	ret_value.emplace_array();
+	return;
+    }
+
+    // Look up object to check for overwrite.
+    ObjectMeta meta = qobj.lookup_object_meta(to_create.parsed_path);
+    std::cerr << "existing obj: " << meta << "\n";
+
+    bool overwriteObject = false;
+
+    if (meta.valid)
+    {
+	// Object exists. Check to see if it is a folder and if we are creating a folder
+	if (meta.is_folder())
 	{
-	    // Object exists. Check to see if it is a folder and if we are creating a folder
-	    if (meta.is_folder())
+	    if (to_create.type == "folder" || to_create.type == "model_folder")
 	    {
-		if (to_create.type == "folder" || to_create.type == "model_folder")
-		{
-		    // Just return data.
-		    ret_value = meta.serialize();
-		    return;
-		}
-		else
-		{
-		    BOOST_LOG_SEV(dc.lg_, wslog::debug) << "Cannot overwrite folder with object";
-		    ret_value.emplace_array();
-		    return;
-		}
+		// Just return data.
+		ret_value = meta.serialize();
+		return;
 	    }
 	    else
 	    {
-		if (to_create.type == "folder" || to_create.type == "model_folder")
-		{
-		    BOOST_LOG_SEV(dc.lg_, wslog::debug) << "Cannot overwrite object with folder";
-		    ret_value.emplace_array();
-		    return;
-		}
+		BOOST_LOG_SEV(dc.lg_, wslog::debug) << "Cannot overwrite folder with object";
+		ret_value.emplace_array();
+		return;
 	    }
-
-	    // We are overwriting this object. 
 	}
 	else
 	{
-	    // We are creating a new object.
-	    ObjectMeta created = qobj.create_workspace_object(to_create, owner);
-	    ret_value = created.serialize();
+	    if (to_create.type == "folder" || to_create.type == "model_folder")
+	    {
+		BOOST_LOG_SEV(dc.lg_, wslog::debug) << "Cannot overwrite object with folder";
+		ret_value.emplace_array();
+		return;
+	    }
+	}
+
+	if (!overwrite)
+	{
+	    BOOST_LOG_SEV(dc.lg_, wslog::debug) << "Object exists but overwrite was not specified";
+	    ret_value.emplace_array();
+	    return;
+	}
+
+	overwrite = true;
+    }
+
+    /*
+     * At this point we've validated our request and know that it is an
+     * ordinary object that needs to be created, possibly with a Shock node
+     * (based on the value of createUploadNodes)
+     */
+    
+    if (createUploadNodes)
+    {
+	/*
+	 * We spawn a coroutine to perform the Shock operations
+	 */
+
+	boost::system::error_code ec;
+	net::io_context &ioc = shared_state_.ioc();
+	
+	net::deadline_timer completion_timer(ioc);
+	std::mutex lock;
+	lock.lock();
+	std::string node_id;
+	boost::asio::spawn(ioc, [&node_id, &dc, &lock, &to_create, this] (net::yield_context yield)
+	    {
+		// Get the auth token for the owner of the Shock nodes if needed.
+		AuthToken &token = shared_state_.ws_auth(yield);
+		
+		node_id = shared_state_.shock().create_node(token, to_create.uuid, yield);
+		std::cerr << "created node " << node_id << "\n";
+		if (node_id.empty())
+		{
+		    return;
+		}
+		to_create.shock_node = shared_state_.config().shock_server() + "/node/" + node_id;
+		shared_state_.shock().acl_add_user(to_create.shock_node, token, dc.token.user(), yield);
+		boost::asio::post(shock_ioc_, [&lock, this, to_create, dtoken = dc.token ] () {
+		    pending_uploads_.emplace(std::make_pair(to_create.uuid, PendingUpload{to_create.uuid, to_create.shock_node, dtoken}));
+		    std::cerr << "canceling timer " << "\n";
+		    lock.unlock();
+		    std::cerr << "canceling timer..done\n";
+		});
+	    });
+	std::cerr << "wait on completion timer " << "\n";
+	lock.lock();
+	lock.unlock();
+	std::cerr << "wait on completion timer ..done\n";
+	if (node_id.empty())
+	{
+	    BOOST_LOG_SEV(dc.lg_, wslog::error) << "Error creating shock node";
+	    ret_value.emplace_array();
 	    return;
 	}
     }
+
+    // We are creating a new object.
+    ObjectMeta created = qobj.create_workspace_object(to_create, owner);
+    ret_value = created.serialize();
+    return;
 }
 
 void WorkspaceService::method_ls(const JsonRpcRequest &req, JsonRpcResponse &resp,

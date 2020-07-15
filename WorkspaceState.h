@@ -17,6 +17,7 @@
 
 class WorkspaceState : public std::enable_shared_from_this<WorkspaceState>
 {
+    boost::asio::io_context &ioc_;
     SigningCerts certs_;
     WorkspaceConfig &config_;
     Shock shock_;
@@ -24,10 +25,12 @@ class WorkspaceState : public std::enable_shared_from_this<WorkspaceState>
     AuthToken ws_auth_;
 
 public:
-    WorkspaceState(WorkspaceConfig &config,
+    WorkspaceState(boost::asio::io_context &ioc,
+		   WorkspaceConfig &config,
 		   Shock &&shock,
 		   UserAgent &&user_agent)
-	: config_(config)
+	: ioc_(ioc)
+	, config_(config)
 	, shock_(std::move(shock))
 	, user_agent_(std::move(user_agent)) {
     }
@@ -39,6 +42,7 @@ public:
     WorkspaceConfig &config() { return config_; }
     const WorkspaceConfig &config() const { return config_; }
     Shock &shock() { return shock_; }
+    boost::asio::io_context &ioc() { return ioc_; }
 
     AuthToken &ws_auth(boost::asio::yield_context yield) {
 	if (!ws_auth_.valid())

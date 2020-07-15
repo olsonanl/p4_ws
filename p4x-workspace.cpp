@@ -98,7 +98,7 @@ int main(int argc, char *argv[])
 
     // Create our global state container.
 
-    WorkspaceState global_state {config, std::move(shock), std::move(user_agent) };
+    WorkspaceState global_state {ioc, config, std::move(shock), std::move(user_agent) };
 
     // Intialize database
 
