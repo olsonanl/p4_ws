@@ -469,6 +469,12 @@ void WorkspaceService::process_create(WorkspaceDBQuery & qobj, DispatchContext &
 
     bool overwriteObject = false;
 
+    /*
+     * We might have to create intermediate path components; keep
+     * a list of them here.
+     */
+    std::vector<ObjectToCreate> intermediates;
+
     if (meta.valid)
     {
 	// Object exists. Check to see if it is a folder and if we are creating a folder
@@ -506,12 +512,59 @@ void WorkspaceService::process_create(WorkspaceDBQuery & qobj, DispatchContext &
 
 	overwrite = true;
     }
+    else
+    {
+	/*
+	 * Object does not exist.
+	 * Validate that the workspace objects along the path to this object
+	 * already exist.
+	 */
+
+	
+	std::vector<std::string> path_comps = to_create.path_components();
+	WSPath qpath(to_create.parsed_path);
+	qpath.path = "";
+
+	auto iter = path_comps.begin();
+	while (iter != path_comps.end())
+	{
+	    qpath.name = *iter;
+	    ObjectMeta pmeta = qobj.lookup_object_meta(qpath);
+	    if (pmeta.valid)
+	    {
+		/*
+		 * If we have an intermediate object that is not a folder
+		 * fail.
+		 */
+		if (!pmeta.is_folder())
+		{
+		    BOOST_LOG_SEV(dc.lg_, wslog::debug) << "Intermediate path object is not a folder";
+		    ret_value.emplace_array();
+		    return;
+		}
+	    }
+	    {
+		ObjectToCreate ptc(qpath, "folder");
+		boost::uuids::uuid uuidobj = (*(db_.uuidgen()))();
+		ptc.uuid = boost::lexical_cast<std::string>(uuidobj);
+		intermediates.push_back(ptc);
+	    }
+	    
+	    if (!qpath.path.empty())
+		qpath.path += "/";
+	    qpath.path += qpath.name;
+	    ++iter;
+	}
+    }
 
     /*
      * At this point we've validated our request and know that it is an
      * ordinary object that needs to be created, possibly with a Shock node
      * (based on the value of createUploadNodes)
+     *
      */
+
+    
     
     if (createUploadNodes)
     {
@@ -522,8 +575,6 @@ void WorkspaceService::process_create(WorkspaceDBQuery & qobj, DispatchContext &
 	boost::system::error_code ec;
 	net::io_context &ioc = shared_state_.ioc();
 	
-	net::deadline_timer completion_timer(ioc);
-
 	/*
 	 * We use a mutex to block the calling thread until the asyncronous operations all complete.
 	 */
@@ -539,6 +590,7 @@ void WorkspaceService::process_create(WorkspaceDBQuery & qobj, DispatchContext &
 		std::cerr << "created node " << node_id << "\n";
 		if (node_id.empty())
 		{
+		    lock.unlock();
 		    return;
 		}
 		to_create.shock_node = shared_state_.config().shock_server() + "/node/" + node_id;
@@ -558,7 +610,23 @@ void WorkspaceService::process_create(WorkspaceDBQuery & qobj, DispatchContext &
 	}
     }
 
+    /*
+     * If we are overwriting, we need to delete the existing object.
+     */
+    if (overwrite)
+    {
+	qobj.remove_workspace_object(to_create.parsed_path, meta.id);
+    }
+     
+
     // We are creating a new object.
+
+    for (auto int_obj: intermediates)
+    {
+	ObjectMeta int_meta = qobj.create_workspace_object(int_obj, owner);
+	std::cerr << "Created intermediate " << int_meta << "\n";
+    }
+	    
     ObjectMeta created = qobj.create_workspace_object(to_create, owner);
     ret_value = created.serialize();
     return;
@@ -918,3 +986,108 @@ void WorkspaceService::method_get_download_url(const JsonRpcRequest &req, JsonRp
     BOOST_LOG_SEV(dc.lg_, wslog::debug) << output << "\n";
 }
 
+void WorkspaceService::method_update_auto_meta(const JsonRpcRequest &req, JsonRpcResponse &resp,
+					       DispatchContext &dc, int &http_code)
+{
+    json::array objects;
+
+    try {
+	auto input = req.params().at(0).as_object();
+	objects = input.at("objects").as_array();
+
+	if (object_at_as_bool(input, "adminmode"))
+	    dc.admin_mode = shared_state_.config().user_is_admin(dc.token.user());
+
+    } catch (std::invalid_argument e) {
+	BOOST_LOG_SEV(dc.lg_, wslog::debug) << "error parsing: " << e.what() << "\n";
+	resp.set_error(-32602, "Invalid request parameters");
+	http_code = 500;
+	return;
+    } catch (std::exception e) {
+	BOOST_LOG_SEV(dc.lg_, wslog::debug) << "error parsing: " << e.what() << "\n";
+	resp.set_error(-32602, "Invalid request parameters");
+	http_code = 500;
+	return;
+    }
+
+    BOOST_LOG_SEV(dc.lg_, wslog::debug) << "method_update_auto_meta  adminmode=" << dc.admin_mode << "\n";
+
+    // Validate format of paths before doing any work
+    for (auto obj: objects)
+    {
+	BOOST_LOG_SEV(dc.lg_, wslog::debug) << "check " << obj << "\n";
+	if (obj.kind() != json::kind::string)
+	{
+	    resp.set_error(-32602, "Invalid request parameters");
+	    http_code = 500;
+	    return;
+	}
+    }
+
+    json::array output;
+
+    for (auto obj: objects)
+    {
+	WSPath path;
+	ObjectMeta meta;
+
+	db_.run_in_sync_thread(dc,
+			  [&path, path_str = obj.as_string(), &output, &meta, this]
+			  (std::unique_ptr<WorkspaceDBQuery> qobj) 
+			      {
+				  path = qobj->parse_path(path_str);
+				  if (path.workspace.name.empty() ||
+				      qobj->user_has_permission(path.workspace, WSPermission::read))
+				  {
+				      meta = qobj->lookup_object_meta(path);
+
+				      /*
+				       * Spawn a coroutine into the thread that we're using
+				       * to manage the pending uploads list. There, find the
+				       * item in the pending_uploads_ list that corresponds
+				       * to this item, and trigger a check. Since presumably the
+				       * client invoking this is the one that did the upload, we
+				       * should see the upload complete but don't worry if it doesn't
+				       * since we the upload check timer may have triggered already.
+				       */
+
+				      std::mutex lock;
+				      lock.lock();
+				      size_t size{};
+				      bool updated = false;
+				      boost::asio::spawn(shock_ioc_, [&lock, &meta, &size, &updated, this](net::yield_context yield)
+					  {
+					      auto iter = pending_uploads_.find(meta.id);
+					      if (iter == pending_uploads_.end())
+					      {
+						  std::cerr << "did not find pending for object\n";
+						  lock.unlock();
+						  return;
+					      }
+					      auto &pu = iter->second;
+					      check_pending_upload(pu, yield);
+					      if (pu.updated())
+					      {
+						  updated = true;
+						  size = pu.size();
+						  pending_uploads_.erase(iter);
+					      }
+					      lock.unlock();
+					  });
+					  
+				      lock.lock();
+				      lock.unlock();
+				      std::cerr << "updated=" << updated << " size=" << size << "\n";
+				      if (updated)
+				      {
+					  qobj->set_object_size(meta.id, size);
+					  meta = qobj->lookup_object_meta(path);
+				      }
+				  }
+				  output.emplace_back(meta.serialize());
+			      });
+    }
+    resp.result().emplace_back(output);
+    BOOST_LOG_SEV(dc.lg_, wslog::debug) << output << "\n";
+}
+	

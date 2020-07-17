@@ -43,9 +43,10 @@ sub test_create
 #		['/olson@patricbrc.org/home/test', 'reads', { a => 34, b => 3.14, c => "some data" }],
 #		['/olson@patricbrc.org/home/newtest', 'txt', { a => 34, b => 3.14, c => "some data"}, "My Data\n"],
 #		['/olson@patricbrc.org/home/newtestfld', 'folder', { a => 34, b => 3.14, c => "some data" }],
-		['/olson@patricbrc.org/xxx/toy1.fq', 'reads', { a => 34, b => 3.14, c => "some data" }],
+#		['/olson@patricbrc.org/xxx/toy1.fq', 'reads', { a => 34, b => 3.14, c => "some data" }],
 #		['/olson@patricbrc.org/home/toy1.fq', 'folder', { a => 34, b => 3.14, c => "some data" }],
-#		['/olson@patricbrc.org/xxx/yyy/zzz', 'folder', { a => 34, b => 3.14, c => "some data" }],
+		['/olson@patricbrc.org/home/toy1.fq/xxx', 'folder', { a => 34, b => 3.14, c => "some data" }],
+#		['/olson@patricbrc.org/xxx/yyy/zzz/aaa/bbb', 'folder', { a => 34, b => 3.14, c => "some data" }],
 #		['/olson@patricbrc.org/xxx/abc', 'folder', { a => 34, b => 3.14, c => "some data" }],
 #		['/olsonx@patricbrc.org/xxx', 'folder', { a => 34, b => 3.14, c => "some data" }],
 #		['/abcde', 'folder', { a => 34, b => 3.14, c => "some data" }],
@@ -56,7 +57,7 @@ sub test_create
     {
 	test_call($ua, $url, $token,
 		  "Workspace.create",
-		  [{objects => [$obj], createUploadNodes => 1  }]);
+		  [{objects => [$obj], createUploadNodes => 0, overwrite => 0  }]);
 #		  [{objects => [$obj], setowner => "dahlia", adminmode=>1 }]);
     }
 

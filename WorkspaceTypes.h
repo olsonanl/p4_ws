@@ -5,6 +5,7 @@
 #include <iomanip>
 #include <ctime>
 #include <boost/json/array.hpp>
+#include <boost/algorithm/string.hpp>
 
 inline std::string format_time(const std::tm &time)
 {
@@ -118,9 +119,19 @@ public:
     std::string uuid;
     std::tm creation_time;
 
-    WSWorkspace()
+    explicit WSWorkspace()
 	: global_permission(WSPermission::none)
 	, creation_time({}) {}
+
+    WSWorkspace(const WSWorkspace &w)
+	: owner(w.owner)
+	, name(w.name)
+	, global_permission(w.global_permission)
+	, user_permission(w.user_permission)
+	, metadata(w.metadata)
+	, uuid(w.uuid)
+	, creation_time(w.creation_time) {
+    }
 
     void serialize_permissions(boost::json::array &obj) {
 
@@ -146,7 +157,13 @@ public:
     std::string name;
     bool empty;
 
-    WSPath(): empty(true) {}
+    explicit WSPath(): empty(true) {}
+
+    WSPath(const WSPath &p)
+	: workspace(p.workspace)
+	, path(p.path)
+	, name(p.name)
+	, empty(p.empty) {}
     
     // A workspace path is a path that does not have any user file component
     // (path and name are both empty)
@@ -232,6 +249,18 @@ struct ObjectToCreate
     std::string uuid;
 
     /**
+     * Construct from a WSPath and type.
+     * Used in the creation of intermediate path components.
+     */
+    explicit ObjectToCreate(const WSPath &path_to_create, const std::string &type_str)
+	: parsed_path(path_to_create)
+	, type(type_str)
+	, creation_time(current_time())
+	{
+	}
+
+
+    /**
      * Construct from the input json.
      * Throw if the format is wrong.
      */
@@ -282,6 +311,12 @@ struct ObjectToCreate
 
     std::string creation_time_str() const {
 	return format_time(creation_time);
+    }
+
+    std::vector<std::string> path_components() const {
+	std::vector<std::string> ret;
+	boost::algorithm::split(ret, parsed_path.path, boost::is_any_of("/"));
+	return ret;
     }
 };
 

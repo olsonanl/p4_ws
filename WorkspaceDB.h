@@ -92,6 +92,8 @@ public:
      */
     ObjectMeta create_workspace_object(const ObjectToCreate &tc, const std::string &owner);
 
+    bool remove_workspace_object(const WSPath &path, const std::string &obj_id);
+
 };
 
 class WorkspaceState;

@@ -790,3 +790,29 @@ void WorkspaceDBQuery::set_object_size(const std::string &object_id, size_t size
 
     bsoncxx::stdx::optional<mongocxx::result::update> result = coll.update_one(filter.view(), set.view());
 }
+
+bool WorkspaceDBQuery::remove_workspace_object(const WSPath &path, const std::string &obj_id)
+{
+    auto coll = (*client_)[db_.db_name()]["objects"];
+    builder::stream::document filter;
+
+    filter << "uuid" << obj_id
+	   << "name" << path.name
+	   << "path" << path.path
+	   << "workspace_uuid" << path.workspace.uuid;
+    std::cerr << bsoncxx::to_json(filter.view()) << "\n";
+
+    bsoncxx::stdx::optional<mongocxx::result::delete_result> result = coll.delete_one(filter.view());
+
+    if (result)
+    {
+	std::cerr << "delete success " << result->deleted_count() << "\n";
+	return true;
+    }
+    else
+    {
+        BOOST_LOG_SEV(lg_, wslog::error) << "failed to remove WS item " << bsoncxx::to_json(filter.view()) << "\n";
+	return false;
+    }
+}
+     

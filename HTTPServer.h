@@ -139,6 +139,8 @@ namespace ws_http_server {
 	    http_resp.set(http::field::server, BOOST_BEAST_VERSION_STRING);
 	    http_resp.set(http::field::content_type, "text/plain");
 
+	    std::cerr << "Handling options " << req.base() << "\n";
+
 	    auto &org = req[http::field::origin];
 	    if (!org.empty())
 		http_resp.set(http::field::access_control_allow_origin, org);
@@ -179,7 +181,7 @@ namespace ws_http_server {
 	    while (body_remaining.size && !header_parser_.is_done())
 	    {
 		http::async_read_some(stream_, buf_, header_parser_, yield[ec]);
-		BOOST_LOG_SEV(lg_, wslog::debug) << "read returns " << ec << "\n";
+		// BOOST_LOG_SEV(lg_, wslog::debug) << "read returns " << ec << "\n";
 		if (ec == http::error::need_buffer || ec == http::error::need_buffer)
 		{
 		}
