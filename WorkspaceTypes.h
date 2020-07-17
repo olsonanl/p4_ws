@@ -6,6 +6,7 @@
 #include <ctime>
 #include <boost/json/array.hpp>
 #include <boost/algorithm/string.hpp>
+#include <experimental/optional>
 
 inline std::string format_time(const std::tm &time)
 {
@@ -236,6 +237,7 @@ public:
 /**
  * A struct wrapper for the object parameter passed to
  * the create method.
+ *
  */
 struct ObjectToCreate
 {
@@ -320,6 +322,85 @@ struct ObjectToCreate
     }
 };
 
+/**
+ * A struct wrapper for the object parameter passed to
+ * the update_metadata method.
+ *
+ */
+struct ObjectToModify
+{
+    std::string path;
+    WSPath parsed_path;
+    std::experimental::optional<std::string> type;
+    std::map<std::string, std::string> user_metadata;
+    std::experimental::optional<std::tm> creation_time;
+
+    /**
+     * Construct from the input json.
+     * Throw if the format is wrong.
+     * typedef structure {
+     *   list<tuple<FullObjectPath,UserMetadata,ObjectType,Timestamp creation_time>> objects;
+     *   bool autometadata;
+     *   bool append;
+     *   bool adminmode;
+     * } update_metadata_params
+     */
+    explicit ObjectToModify(const boost::json::value &val) {
+	auto obj = val.as_array();
+	path = obj[0].as_string().c_str();
+	if (obj.size() >= 2)
+	{
+	    auto m = obj[1].as_object();
+	    for (auto elt: m)
+	    {
+		auto &val =  elt.value();
+		switch (val.kind())
+		{
+		case boost::json::kind::double_:
+		    user_metadata.emplace(std::make_pair(elt.key(), std::to_string(val.as_double())));
+		    break;
+
+		case boost::json::kind::int64:
+		    user_metadata.emplace(std::make_pair(elt.key(), std::to_string(val.as_int64())));
+		    break;
+
+		case boost::json::kind::uint64:
+		    user_metadata.emplace(std::make_pair(elt.key(), std::to_string(val.as_uint64())));
+		    break;
+		
+		case boost::json::kind::string:
+		    user_metadata.emplace(std::make_pair(elt.key(), val.as_string().c_str()));
+		    break;
+		
+		default:
+		    user_metadata.emplace(std::make_pair(elt.key(), ""));
+		}
+	    }
+	}
+	if (obj.size() >= 3 && obj[2].kind() == boost::json::kind::string)
+	{
+	    type.emplace(obj[2].as_string().c_str());
+	}
+	if (obj.size() >= 4 && obj[3].kind() == boost::json::kind::string)
+	{
+	    std::istringstream ss(obj[3].as_string().c_str());
+	    std::tm t;
+	    ss >> std::get_time(&t, "%Y-%m-%dT%H:%M:%SZ");
+	    creation_time.emplace(t);
+	}
+    }
+
+    std::string creation_time_str() const {
+	return format_time(*creation_time);
+    }
+
+    std::vector<std::string> path_components() const {
+	std::vector<std::string> ret;
+	boost::algorithm::split(ret, parsed_path.path, boost::is_any_of("/"));
+	return ret;
+    }
+};
+
 
 inline std::ostream &operator<<(std::ostream &os, const std::map<std::string, std::string> &m)
 {
@@ -358,6 +439,16 @@ inline std::ostream &operator<<(std::ostream &os, const ObjectToCreate&c)
        << "," << c.user_metadata
        << "," << c.object_data
        << "," << c.creation_time
+       << ")";
+    return os;
+}
+
+inline std::ostream &operator<<(std::ostream &os, const ObjectToModify&c)
+{
+    os << "OTC(" << c.path
+       << "," << (c.type ? c.type.value() : "<none>")
+       << "," << c.user_metadata
+       << "," << (c.creation_time ? format_time(c.creation_time.value()) : "<none>")
        << ")";
     return os;
 }

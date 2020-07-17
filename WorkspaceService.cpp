@@ -1036,8 +1036,7 @@ void WorkspaceService::method_update_auto_meta(const JsonRpcRequest &req, JsonRp
 			  (std::unique_ptr<WorkspaceDBQuery> qobj) 
 			      {
 				  path = qobj->parse_path(path_str);
-				  if (path.workspace.name.empty() ||
-				      qobj->user_has_permission(path.workspace, WSPermission::read))
+				  if (qobj->user_has_permission(path.workspace, WSPermission::read))
 				  {
 				      meta = qobj->lookup_object_meta(path);
 
@@ -1090,4 +1089,82 @@ void WorkspaceService::method_update_auto_meta(const JsonRpcRequest &req, JsonRp
     resp.result().emplace_back(output);
     BOOST_LOG_SEV(dc.lg_, wslog::debug) << output << "\n";
 }
-	
+
+void WorkspaceService::method_update_metadata(const JsonRpcRequest &req, JsonRpcResponse &resp,
+					      DispatchContext &dc, int &http_code)
+{
+    json::array objects;
+    bool append;
+
+    auto &cfg = shared_state_.config();
+
+    try {
+	auto input = req.params().at(0).as_object();
+	objects = input.at("objects").as_array();
+
+	append = object_at_as_bool(input, "append");
+	if (object_at_as_bool(input, "adminmode"))
+	    dc.admin_mode = shared_state_.config().user_is_admin(dc.token.user());
+
+    } catch (std::invalid_argument e) {
+	BOOST_LOG_SEV(dc.lg_, wslog::debug) << "error parsing: " << e.what() << "\n";
+	resp.set_error(-32602, "Invalid request parameters");
+	http_code = 500;
+	return;
+    } catch (std::exception e) {
+	BOOST_LOG_SEV(dc.lg_, wslog::debug) << "error parsing: " << e.what() << "\n";
+	resp.set_error(-32602, "Invalid request parameters");
+	http_code = 500;
+	return;
+    }
+
+    BOOST_LOG_SEV(dc.lg_, wslog::debug) << "method_update_metadata  adminmode=" << dc.admin_mode << "\n";
+
+    std::vector<ObjectToModify> to_modify;
+    
+    // Validate format of paths before doing any work
+    for (auto obj: objects)
+    {
+	try {
+	    ObjectToModify tc{obj};
+	    if (tc.type)
+	    {
+		std::string canon;
+		if (!cfg.is_valid_type(tc.type.value(), canon))
+		{
+		    BOOST_LOG_SEV(dc.lg_, wslog::debug) << "Invalid type requested " << tc.type.value();
+		    resp.set_error(-32602, "Invalid object type requested");
+		    http_code = 500;
+		    return;
+		}
+		tc.type = canon;
+	    }
+	    std::cerr << "TO modify: " << tc << "\n";
+	    to_modify.emplace_back(tc);
+	} catch (std::exception e) {
+	    BOOST_LOG_SEV(dc.lg_, wslog::debug) << "error parsing: " << e.what() << "\n";
+	    resp.set_error(-32602, "Invalid request parameters");
+	    http_code = 500;
+	    return;
+	}
+    }
+
+    json::array output;
+
+    db_.run_in_sync_thread(dc, [&to_modify, &output, this]
+	(std::unique_ptr<WorkspaceDBQuery> qobj) 
+	{
+	    for (auto obj: to_modify)
+	    {
+		WSPath path = qobj->parse_path(obj.path);
+		
+		if (qobj->user_has_permission(path.workspace, WSPermission::write))
+		{
+		}
+	    }
+	});
+    
+    resp.result().emplace_back(output);
+    BOOST_LOG_SEV(dc.lg_, wslog::debug) << output << "\n";
+}
+

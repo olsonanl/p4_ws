@@ -14,7 +14,8 @@ my $ua = LWP::UserAgent->new();
 
 my $url = 'http://holly:12312/api';
 
-test_create($ua, $url, $token);
+test_update_metadata($ua, $url, $token);
+#test_create($ua, $url, $token);
 #test_get_download_url($ua, $url, $token);
 
 sub test_get_download_url
@@ -30,6 +31,25 @@ sub test_get_download_url
 	test_call($ua, $url, $token,
 		  "Workspace.get_download_url",
 		  [{objects => [$obj]}]);
+    }
+
+}
+
+sub test_update_metadata
+{
+    my($ua, $url, $token) = @_;
+
+    my @objs = ('/olson@patricbrc.org/home/toy1.fq',
+		);
+
+    for my $obj (@objs)
+    {
+	test_call($ua, $url, $token,
+		  "Workspace.update_metadata",
+		  [{objects => [[$obj],
+				[$obj, { a => 11 }],
+				[$obj, {}, "newtype"]],
+		    }]);
     }
 
 }
