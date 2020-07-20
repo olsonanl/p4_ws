@@ -1151,15 +1151,33 @@ void WorkspaceService::method_update_metadata(const JsonRpcRequest &req, JsonRpc
 
     json::array output;
 
-    db_.run_in_sync_thread(dc, [&to_modify, &output, this]
+    db_.run_in_sync_thread(dc, [&to_modify, &output, append, this]
 	(std::unique_ptr<WorkspaceDBQuery> qobj) 
 	{
 	    for (auto obj: to_modify)
 	    {
-		WSPath path = qobj->parse_path(obj.path);
+		obj.parsed_path = qobj->parse_path(obj.path);
 		
-		if (qobj->user_has_permission(path.workspace, WSPermission::write))
+		if (qobj->user_has_permission(obj.parsed_path.workspace, WSPermission::write))
 		{
+		    // Validate setting type on workspace.
+		    // We also want to validate changing type to/from folder
+		    // but defer that to where we've already looked up metadata.
+		    if (obj.parsed_path.is_workspace_path())
+		    {
+			if (obj.type)
+			{
+			    std::cerr << " cannot set type on workspace\n";
+			    output.emplace_back(json::array{});
+			    continue;
+			}
+		    }
+
+		    std::cerr << "Apply metadata change " << obj << "\n";
+
+		    auto meta = qobj->update_object(obj, append);
+
+		    output.emplace_back(meta.serialize());
 		}
 	    }
 	});

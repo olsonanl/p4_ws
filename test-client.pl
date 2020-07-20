@@ -39,17 +39,33 @@ sub test_update_metadata
 {
     my($ua, $url, $token) = @_;
 
-    my @objs = ('/olson@patricbrc.org/home/toy1.fq',
+    my @objs = (
+		# '/olson@patricbrc.org/xxx',
+		'/olson@patricbrc.org/home/toy1.fq',
 		);
 
     for my $obj (@objs)
     {
 	test_call($ua, $url, $token,
 		  "Workspace.update_metadata",
-		  [{objects => [[$obj],
-				[$obj, { a => 11 }],
-				[$obj, {}, "newtype"]],
+		  [{objects => [
+				# [$obj],
+				[$obj, { c => 13 }],
+				#[$obj, { a => 11 }, "txt" ],
+				# [$obj, undef, "reads"],
+				#[$obj, undef, "folder"],
+				# [$obj, undef, undef, "2020-01-02T03:31:12Z"],
+				],
+			append => 1,
 		    }]);
+	if (0) {
+	    test_call($ua, $url, $token,
+		      "Workspace.update_metadata",
+		      [{objects => [
+				    [$obj, {}, "newtype"],
+				    ],
+			}]);
+	}
     }
 
 }

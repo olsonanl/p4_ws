@@ -815,4 +815,91 @@ bool WorkspaceDBQuery::remove_workspace_object(const WSPath &path, const std::st
 	return false;
     }
 }
-     
+
+/*
+ * Update this object in the database.
+ *
+ * It may be either a workspace or an object to be updated. We have
+ * down ownership and correctness validations before coming here, so
+ * our task is to look up the data, make modifications, and return
+ * updated metadata.
+ */
+ObjectMeta WorkspaceDBQuery::update_object(const ObjectToModify &obj, bool append)
+{
+    ObjectMeta meta = lookup_object_meta(obj.parsed_path);
+
+    std::cerr << "update: meta=" << meta << "\n";
+    std::cerr << "  md=" << meta.user_metadata << "\n";
+    std::cerr << "  type=" << meta.type << "\n";
+    std::cerr << "  cre=" << meta.creation_time << "\n";
+
+    if (obj.type && (is_folder(obj.type.value()) != is_folder(meta.type)))
+    {
+        BOOST_LOG_SEV(lg_, wslog::error) << "cannot change non-folder type to folder or vice versa";
+	return {};
+    }
+
+    auto coll = (*client_)[db_.db_name()][obj.parsed_path.is_workspace_path() ? "workspaces" : "objects"];
+    builder::stream::document filter;
+
+    filter << "uuid" << meta.id;
+    std::cerr << "Update filter " << bsoncxx::to_json(filter.view()) << "\n";
+
+    builder::stream::document update;
+
+    update << "$set"
+	   << builder::stream::open_document;
+
+    bool empty = true;
+    if (obj.user_metadata)
+    {
+	empty = false;
+	// If we are appending, initialize our map with current md. Otherwise not.
+	std::map<std::string, std::string> to_update;
+	if (append)
+	    to_update = meta.user_metadata;
+	to_update.insert(obj.user_metadata.value().begin(), obj.user_metadata.value().end());
+
+	builder::stream::document  md;
+	for (auto x: to_update)
+	    md << x.first << x.second;
+	update << "metadata" << md;
+    }
+    if (obj.type)
+    {
+	if (obj.type.value() == meta.type)
+	{
+	    std::cerr << "skipping update of type - value already set\n";
+	}
+	else
+	{
+	    empty = false;
+	    update << "type" << obj.type.value();
+	}
+    }
+    if (obj.creation_time)
+    {
+	empty = false;
+	update << "creation_date" << obj.creation_time_str();
+    }
+    update << builder::stream::close_document;
+
+    if (empty)
+    {
+	std::cerr << "Nothing to update\n";
+	return meta;
+    }
+    std::cerr << "Update data " << bsoncxx::to_json(update.view()) << "\n";
+    bsoncxx::stdx::optional<mongocxx::result::update> result = coll.update_one(filter.view(), update.view());
+    if (result)
+    {
+	std::cerr << "updated\n";
+	meta = lookup_object_meta(obj.parsed_path);
+    }
+    else
+    {
+	std::cerr << "update failed!\n";
+    }
+    return meta;
+}
+

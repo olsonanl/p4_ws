@@ -94,6 +94,10 @@ public:
 
     bool remove_workspace_object(const WSPath &path, const std::string &obj_id);
 
+    /**
+     * Update workspace or object metadata.
+     */
+    ObjectMeta update_object(const ObjectToModify &obj, bool append);
 };
 
 class WorkspaceState;

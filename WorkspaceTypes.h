@@ -332,7 +332,7 @@ struct ObjectToModify
     std::string path;
     WSPath parsed_path;
     std::experimental::optional<std::string> type;
-    std::map<std::string, std::string> user_metadata;
+    std::experimental::optional<std::map<std::string, std::string>> user_metadata;
     std::experimental::optional<std::tm> creation_time;
 
     /**
@@ -348,8 +348,9 @@ struct ObjectToModify
     explicit ObjectToModify(const boost::json::value &val) {
 	auto obj = val.as_array();
 	path = obj[0].as_string().c_str();
-	if (obj.size() >= 2)
+	if (obj.size() >= 2 && obj[1].kind() == boost::json::kind::object)
 	{
+	    user_metadata.emplace(std::map<std::string, std::string>());
 	    auto m = obj[1].as_object();
 	    for (auto elt: m)
 	    {
@@ -357,23 +358,23 @@ struct ObjectToModify
 		switch (val.kind())
 		{
 		case boost::json::kind::double_:
-		    user_metadata.emplace(std::make_pair(elt.key(), std::to_string(val.as_double())));
+		    user_metadata->emplace(std::make_pair(elt.key(), std::to_string(val.as_double())));
 		    break;
 
 		case boost::json::kind::int64:
-		    user_metadata.emplace(std::make_pair(elt.key(), std::to_string(val.as_int64())));
+		    user_metadata->emplace(std::make_pair(elt.key(), std::to_string(val.as_int64())));
 		    break;
 
 		case boost::json::kind::uint64:
-		    user_metadata.emplace(std::make_pair(elt.key(), std::to_string(val.as_uint64())));
+		    user_metadata->emplace(std::make_pair(elt.key(), std::to_string(val.as_uint64())));
 		    break;
 		
 		case boost::json::kind::string:
-		    user_metadata.emplace(std::make_pair(elt.key(), val.as_string().c_str()));
+		    user_metadata->emplace(std::make_pair(elt.key(), val.as_string().c_str()));
 		    break;
 		
 		default:
-		    user_metadata.emplace(std::make_pair(elt.key(), ""));
+		    user_metadata->emplace(std::make_pair(elt.key(), ""));
 		}
 	    }
 	}
@@ -447,7 +448,13 @@ inline std::ostream &operator<<(std::ostream &os, const ObjectToModify&c)
 {
     os << "OTC(" << c.path
        << "," << (c.type ? c.type.value() : "<none>")
-       << "," << c.user_metadata
+       << ",";
+    if (c.user_metadata)
+	os << c.user_metadata.value();
+    else
+	os << "<none>";
+	
+    os
        << "," << (c.creation_time ? format_time(c.creation_time.value()) : "<none>")
        << ")";
     return os;
