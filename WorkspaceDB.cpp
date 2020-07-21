@@ -924,7 +924,7 @@ std::experimental::optional<std::string> WorkspaceDBQuery::update_permissions(co
 	    return "modifications to published workspace must be performed by owner or administrator";
 	}
     }
-    else if (!user_has_permission(path.workspace, WSPermission::admin))
+    else if (!user_has_permission(ws, WSPermission::admin))
     {
 	return "permission denied";
     }
@@ -934,6 +934,12 @@ std::experimental::optional<std::string> WorkspaceDBQuery::update_permissions(co
 	if (up.permission() == WSPermission::public_)
 	    return "user permissions may not be set to publish";
     }
+
+    /*
+     * Create documents for the sets and unsets, and then construct
+     * a single mongo request with the appropriate $set and $unset
+     * fields requested.
+     */
 
     builder::stream::document set_vals, unset_vals;
 
@@ -948,22 +954,15 @@ std::experimental::optional<std::string> WorkspaceDBQuery::update_permissions(co
 	set_vals << "global_permission" << to_string(gp);
     }
 
-    /* Process the adds, then the deletes */
-
-    for (auto up: user_permissions)
-    {
-	if (up.permission() != WSPermission::none)
-	{
-	    set_vals << ("permissions." + mongo_user_encode(up.user())) << to_string(up.permission());
-	}
-    }
-
-    
     for (auto up: user_permissions)
     {
 	if (up.permission() == WSPermission::none)
 	{
 	    unset_vals << ("permissions." + mongo_user_encode(up.user())) << "";
+	}
+	else
+	{
+	    set_vals << ("permissions." + mongo_user_encode(up.user())) << to_string(up.permission());
 	}
     }
 
