@@ -80,6 +80,11 @@ inline WSPermission to_permission(const std::string &str)
     return to_permission(str.front());
 }
 
+inline WSPermission to_permission(char *s)
+{
+    return to_permission(s[0]);
+}
+
 inline std::ostream &operator<<(std::ostream &os, WSPermission p)
 {
     switch (p)
@@ -108,6 +113,45 @@ inline std::ostream &operator<<(std::ostream &os, WSPermission p)
     }
     return os;
 }
+
+class UserPermission
+{
+private:
+    std::string user_;
+    WSPermission permission_;
+
+public:
+    explicit UserPermission(const boost::json::value &p) {
+	if (p.kind() == boost::json::kind::array)
+	{
+	    auto ar = p.as_array();
+	    user_ = ar.at(0).as_string().c_str();
+	    permission_ = to_permission(ar.at(1).as_string().c_str());
+	    if (permission_ == WSPermission::invalid)
+		throw std::runtime_error("UserPermission: invalid permission string");
+		
+	}
+	else
+	{
+	    throw std::runtime_error("UserPermission: object was not an array");
+	}
+    }
+
+    UserPermission(const UserPermission &p)
+	: user_(p.user_)
+	, permission_(p.permission_) {
+    }
+
+    UserPermission(UserPermission &&p)
+	: user_(std::move(p.user_))
+	, permission_(p.permission_) {
+	std::cerr << "UP move construct\n";
+    }
+
+    const std::string & user() const { return user_;}
+    WSPermission permission() const { return permission_; }
+};
+
 
 class WSWorkspace
 {
@@ -440,6 +484,14 @@ inline std::ostream &operator<<(std::ostream &os, const ObjectToCreate&c)
        << "," << c.user_metadata
        << "," << c.object_data
        << "," << c.creation_time
+       << ")";
+    return os;
+}
+
+inline std::ostream &operator<<(std::ostream &os, const UserPermission &up)
+{
+    os << "UP(" << up.user()
+       << "," << up.permission()
        << ")";
     return os;
 }

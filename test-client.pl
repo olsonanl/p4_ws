@@ -14,7 +14,8 @@ my $ua = LWP::UserAgent->new();
 
 my $url = 'http://holly:12312/api';
 
-test_update_metadata($ua, $url, $token);
+test_set_permissions($ua, $url, $token);
+#test_update_metadata($ua, $url, $token);
 #test_create($ua, $url, $token);
 #test_get_download_url($ua, $url, $token);
 
@@ -66,6 +67,37 @@ sub test_update_metadata
 				    ],
 			}]);
 	}
+    }
+
+}
+
+sub test_set_permissions
+{
+    my($ua, $url, $token) = @_;
+
+    my @objs = (
+		'/olson@patricbrc.org/xxx',
+		# '/olson@patricbrc.org/home/toy1.fq',
+		);
+
+    for my $obj (@objs)
+    {
+	test_call($ua, $url, $token,
+		  "Workspace.set_permissions",
+		  [{ path => $obj,
+			 permissions => [['olson@patricbrc.org', 'r'], ['foobar', 'o']],
+			 new_global_permission => 'n',
+			 adminmode => 0,
+		      
+		    }]);
+	test_call($ua, $url, $token,
+		  "Workspace.set_permissions",
+		  [{ path => $obj,
+			 permissions => [['olson@patricbrc.org', 'r'], ['foobar', 'n']],
+			 new_global_permission => 'p',
+			 adminmode => 0,
+		      
+		    }]);
     }
 
 }

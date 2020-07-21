@@ -3,6 +3,7 @@
 
 #include <memory>
 #include <thread>
+#include <experimental/optional>
 
 #include <mongocxx/instance.hpp>
 #include <mongocxx/uri.hpp>
@@ -98,6 +99,14 @@ public:
      * Update workspace or object metadata.
      */
     ObjectMeta update_object(const ObjectToModify &obj, bool append);
+
+    /**
+     * Update workspace permissions.
+     */
+    std::experimental::optional<std::string>  update_permissions(const std::string &path,
+								 const std::vector<UserPermission> &user_permissions,
+								 const std::experimental::optional<WSPermission> &new_global_permission,
+								 boost::json::array &output);
 };
 
 class WorkspaceState;

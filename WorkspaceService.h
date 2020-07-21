@@ -120,6 +120,7 @@ private:
 	method_map_.emplace(std::make_pair("ls",  Method { &WorkspaceService::method_ls, Authentication::optional }));
 	method_map_.emplace(std::make_pair("get", Method { &WorkspaceService::method_get, Authentication::optional }));
 	method_map_.emplace(std::make_pair("list_permissions", Method { &WorkspaceService::method_list_permissions, Authentication::optional }));
+	method_map_.emplace(std::make_pair("set_permissions", Method { &WorkspaceService::method_set_permissions, Authentication::required }));
 	method_map_.emplace(std::make_pair("get_download_url", Method { &WorkspaceService::method_get_download_url, Authentication::optional }));
 	method_map_.emplace(std::make_pair("update_auto_meta", Method { &WorkspaceService::method_update_auto_meta, Authentication::optional }));
 	method_map_.emplace(std::make_pair("update_metadata", Method { &WorkspaceService::method_update_metadata, Authentication::required }));
@@ -129,6 +130,7 @@ private:
     void method_get(const JsonRpcRequest &req, JsonRpcResponse &resp, DispatchContext &dc, int &http_code);
     void method_ls(const JsonRpcRequest &req, JsonRpcResponse &resp, DispatchContext &dc, int &http_code);
     void method_list_permissions(const JsonRpcRequest &req, JsonRpcResponse &resp, DispatchContext &dc, int &http_code);
+    void method_set_permissions(const JsonRpcRequest &req, JsonRpcResponse &resp, DispatchContext &dc, int &http_code);
     void method_get_download_url(const JsonRpcRequest &req, JsonRpcResponse &resp, DispatchContext &dc, int &http_code);
     void method_update_auto_meta(const JsonRpcRequest &req, JsonRpcResponse &resp, DispatchContext &dc, int &http_code);
     void method_update_metadata(const JsonRpcRequest &req, JsonRpcResponse &resp, DispatchContext &dc, int &http_code);

@@ -1186,3 +1186,78 @@ void WorkspaceService::method_update_metadata(const JsonRpcRequest &req, JsonRpc
     BOOST_LOG_SEV(dc.lg_, wslog::debug) << output << "\n";
 }
 
+void WorkspaceService::method_set_permissions(const JsonRpcRequest &req, JsonRpcResponse &resp, DispatchContext &dc, int &http_code)
+{
+    std::string path;
+    std::vector<UserPermission> user_permissions;
+    std::experimental::optional<WSPermission> new_global_permission;
+    
+    try {
+	auto input = req.params().at(0).as_object();
+	path = input.at("path").as_string().c_str();
+	auto perm_it = input.find("permissions");
+	if (perm_it != input.end() && perm_it->value().kind() == json::kind::array)
+	{
+	    for (auto p: perm_it->value().as_array())
+	    {
+		user_permissions.emplace_back(p);
+	    }
+	}
+	auto glob_it = input.find("new_global_permission");
+	if (glob_it != input.end() &&
+	    glob_it->value().kind() == json::kind::string)
+	{
+	    new_global_permission.emplace(to_permission(glob_it->value().as_string().c_str()));
+	}
+
+	if (object_at_as_bool(input, "adminmode"))
+	    dc.admin_mode = shared_state_.config().user_is_admin(dc.token.user());
+
+    } catch (std::invalid_argument e) {
+	BOOST_LOG_SEV(dc.lg_, wslog::debug) << "error parsing: " << e.what() << "\n";
+	resp.set_error(-32602, "Invalid request parameters");
+	http_code = 500;
+	return;
+    } catch (std::exception e) {
+	BOOST_LOG_SEV(dc.lg_, wslog::debug) << "error parsing: " << e.what() << "\n";
+	resp.set_error(-32602, "Invalid request parameters");
+	http_code = 500;
+	return;
+    }
+
+    json::array output;
+
+    /*
+     * Perform the requested operations.
+     *
+     * Verify the path is a workspace path (permissions are only set on workspaces).
+     * Verify user permissions.
+     *    If the workspace is a published workspace, only allow owner or admin to change perms.
+     *    Otherwise check for admin permission on the workspace.
+     * Verify no user-specfic perms are "publish"
+     * If new_global_permission is set
+     *    If new global permission is publish, verify user is owner
+     *    Update global perm
+     * For each user perm,
+     *    If new perm is "none", delete existing permission for that user
+     *    Otherwise set permission for that user
+     * Construct output for new current state.
+     */
+
+    std::experimental::optional<std::string> err;
+    db_.run_in_sync_thread(dc, [&path, &user_permissions, &new_global_permission, &output, &err, this]
+	(std::unique_ptr<WorkspaceDBQuery> qobj) 
+	{
+	    err = qobj->update_permissions(path, user_permissions, new_global_permission, output);
+	});
+
+
+    if (err)
+    {
+	std::cerr << "error from update: " << *err << "\n";
+    }
+    
+    resp.result().emplace_back(output);
+    BOOST_LOG_SEV(dc.lg_, wslog::debug) << output << "\n";
+
+}

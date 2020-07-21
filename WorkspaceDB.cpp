@@ -903,3 +903,103 @@ ObjectMeta WorkspaceDBQuery::update_object(const ObjectToModify &obj, bool appen
     return meta;
 }
 
+std::experimental::optional<std::string> WorkspaceDBQuery::update_permissions(const std::string &path_str,
+									      const std::vector<UserPermission> &user_permissions,
+									      const std::experimental::optional<WSPermission> &new_global_permission,
+									      boost::json::array &output)
+{
+    WSPath path = parse_path(path_str);
+
+    if (!path.is_workspace_path())
+    {
+	return "path is not a workspace path";
+    }
+
+    WSWorkspace &ws = path.workspace;
+
+    if (ws.global_permission == WSPermission::public_)
+    {
+	if (token().user() != ws.owner && !admin_mode())
+	{
+	    return "modifications to published workspace must be performed by owner or administrator";
+	}
+    }
+    else if (!user_has_permission(path.workspace, WSPermission::admin))
+    {
+	return "permission denied";
+    }
+
+    for (auto up: user_permissions)
+    {
+	if (up.permission() == WSPermission::public_)
+	    return "user permissions may not be set to publish";
+    }
+
+    builder::stream::document set_vals, unset_vals;
+
+    if (new_global_permission)
+    {
+	WSPermission gp = *new_global_permission;
+	if (gp == WSPermission::public_)
+	{
+	    if (token().user() != ws.owner)
+		return "Only owner may set publish permission";
+	}
+	set_vals << "global_permission" << to_string(gp);
+    }
+
+    /* Process the adds, then the deletes */
+
+    for (auto up: user_permissions)
+    {
+	if (up.permission() != WSPermission::none)
+	{
+	    set_vals << ("permissions." + mongo_user_encode(up.user())) << to_string(up.permission());
+	}
+    }
+
+    
+    for (auto up: user_permissions)
+    {
+	if (up.permission() == WSPermission::none)
+	{
+	    unset_vals << ("permissions." + mongo_user_encode(up.user())) << "";
+	}
+    }
+
+    if (set_vals.view().empty() && unset_vals.view().empty())
+    {
+	BOOST_LOG_SEV(lg_, wslog::debug) << "No values to set, returning\n";
+	return {};
+    }
+
+    auto coll = (*client_)[db_.db_name()]["workspaces"];
+    builder::stream::document filter;
+    filter << "uuid" << ws.uuid;
+    BOOST_LOG_SEV(lg_, wslog::debug) << "Update filter " << bsoncxx::to_json(filter.view()) << "\n";
+
+    builder::stream::document update;
+    
+    if (!set_vals.view().empty())
+    {
+	update << "$set" << set_vals;
+    }
+    if (!unset_vals.view().empty())
+    {
+	update << "$unset" << unset_vals;
+    }
+
+    BOOST_LOG_SEV(lg_, wslog::debug) << "Update set " << bsoncxx::to_json(update.view()) << "\n";
+
+    bsoncxx::stdx::optional<mongocxx::result::update> result = coll.update_one(filter.view(), update.view());
+    if (result)
+    {
+	BOOST_LOG_SEV(lg_, wslog::debug)  << "updated\n";
+    }
+    else
+    {
+	BOOST_LOG_SEV(lg_, wslog::debug) << "update failed!\n";
+    }
+
+    return {};
+}
