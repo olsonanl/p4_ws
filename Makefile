@@ -120,7 +120,7 @@ SigningCerts.h: SigningCerts.h.tt load-signing-certs.pl
 
 x: x.o
 	PATH=$(BUILD_TOOLS)/bin:$$PATH $(CXX) -DPIDINFO_TEST_MAIN $(OPTIMIZE) -o $@ $^ $(CXXFLAGS) $(LDFLAGS) $(CXX_LDFLAGS) $(LIBS)
-y: y.o UserAgent.o
+y: y.o 
 	PATH=$(BUILD_TOOLS)/bin:$$PATH $(CXX) -DPIDINFO_TEST_MAIN $(OPTIMIZE) -o $@ $^ $(CXXFLAGS) $(LDFLAGS) $(CXX_LDFLAGS) $(LIBS)
 ssl: ssl.o
 	PATH=$(BUILD_TOOLS)/bin:$$PATH $(CXX) -DPIDINFO_TEST_MAIN $(OPTIMIZE) -o $@ $^ $(CXXFLAGS) $(LDFLAGS) $(CXX_LDFLAGS) $(LIBS)
@@ -141,6 +141,9 @@ deploy-all: deploy-client deploy-service
 deploy-client: 
 
 deploy-service: 
+
+doxygen:
+	doxygen 
 
 include $(TOP_DIR)/tools/Makefile.common.rules
 

@@ -4,9 +4,14 @@
 #include <iostream>
 #include <iomanip>
 #include <ctime>
+#include <map>
+#include <vector>
+#include <boost/regex.hpp>
 #include <boost/json/array.hpp>
 #include <boost/algorithm/string.hpp>
+#include <boost/filesystem.hpp>
 #include <experimental/optional>
+
 
 inline std::string format_time(const std::tm &time)
 {
@@ -223,11 +228,102 @@ public:
     bool has_valid_name() const {
 	return !name.empty() && name.find_first_of("/") == std::string::npos;
     }
+
+    /**
+     * Attempt to replace the from string at the start of the path with the to
+     * string. If successful, returns an optional value containing the new WSPath.
+     * If not successful, returns an empty value.
+     */
+    std::experimental::optional<WSPath> replace_path_prefix(const std::string &from, const std::string &to) {
+	boost::regex match_re(from + "(/.*|)");
+
+	boost::smatch sm;
+	if (boost::regex_match(path, sm, match_re))
+	{
+	    WSPath ret = *this;
+	    ret.path = to + sm[1];
+	    return ret;
+	}
+	else
+	{
+	    return {};
+	}
+    }
+
+    /**
+     * Attempt to replace the from string at the start of the path with the to
+     * string. If successful, returns an optional value containing the new WSPath.
+     * If not successful, returns an empty value.
+     *
+     * If from and to have different workspaces, we replace the workspace as well.
+     */
+    std::experimental::optional<WSPath> replace_path_prefix(const WSPath &from, const WSPath &to) {
+
+	// If from is a valid folder, it will have path=/some/path and name=dirname
+	// So the path we wish to replace in our path is /some/path/dirname
+	boost::regex match_re(from.full_path() + "(/.*|)");
+
+	boost::smatch sm;
+	if (boost::regex_match(path, sm, match_re))
+	{
+	    WSPath ret = *this;
+	    ret.path = to.full_path() + sm[1];
+	    if (ret.path == "/")
+		ret.path = "";
+	    ret.workspace = to.workspace;
+	    return ret;
+	}
+	else
+	{
+	    std::cerr << "No match for " << match_re << " in " << path << "\n";
+	    return {};
+	}
+    }
+
+    std::vector<std::string> path_components() const {
+	std::vector<std::string> ret;
+	boost::algorithm::split(ret, path, boost::is_any_of("/"));
+	return ret;
+    }
+
+    /**
+     * Return the parent to this path.
+     *
+     * We move the last component of the path to the name field
+     * and trim it from the path.
+     *
+     * If path is empty, we set the name to empty. (path of root is root)
+     */
+    WSPath parent_path() {
+	WSPath ret = *this;
+	if (path.empty())
+	{
+	    ret.name = "";
+	    return ret;
+	}
+	
+	int pos = path.rfind('/');
+
+	if (pos == std::string::npos)
+	{
+	    ret.path = "";
+	    ret.name = path;
+	}
+	else
+	{
+	    ret.path = path.substr(0, pos);
+	    ret.name = path.substr(pos + 1);
+	}
+	return ret;
+    }
+	
 };
 
 class ObjectMeta
 {
 public:
+    static struct ErrorMeta {} errorMeta;
+
     std::string name;
     std::string type;
     std::string path;
@@ -241,6 +337,17 @@ public:
     WSPermission global_permission;
     std::string shockurl;
     bool valid;
+    std::string error;
+    WSPath ws_path;
+
+    ObjectMeta(ErrorMeta, const std::string &err)
+	: size(0)
+	, creation_time({})
+	, user_permission(WSPermission::none)
+	, global_permission(WSPermission::none)
+	, valid(false)
+	, error(err)
+	{}
 
     ObjectMeta()
 	: size(0)
@@ -269,12 +376,16 @@ public:
 	    return boost::json::array({name, type, path,
 		    creation_time, id, 
 		    owner, size,
-		    user_metadata, am, user_permission, global_permission, shockurl });
+		    user_metadata, am, user_permission, global_permission, shockurl, error });
 	}
 	else
 	{
-	    return boost::json::array({});
+	    return boost::json::array({nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, error });
+
 	}
+    }
+    std::string creation_time_str() const {
+	return format_time(creation_time);
     }
 };
 
@@ -440,12 +551,80 @@ struct ObjectToModify
     }
 
     std::vector<std::string> path_components() const {
-	std::vector<std::string> ret;
-	boost::algorithm::split(ret, parsed_path.path, boost::is_any_of("/"));
-	return ret;
+	return parsed_path.path_components();
     }
 };
 
+/**
+ * A RemovalRequest maintains a set of objects to be removed from
+ * either the filesystem or Shock.
+ *
+ * It is passed to the workspace database methods that remove the
+ * database records for the objects and updated there.
+ *
+ * At a later point in a more appropriate thread (async Shock thread
+ * or file I/O thread) the file or shock nodes will be removed.
+ */
+class RemovalRequest
+{
+
+private:
+
+    /**
+     * Shock object be removed. We keep the
+     * workspace ID with the data in order to last-user-out removal
+     * of the shock node.
+     */
+    struct ShockObj {
+	std::string shock_url;
+	std::string ws_id;
+    };
+
+    /**
+     * List of shock objects to be removed.
+     */
+    std::vector<ShockObj> shock_urls_;
+
+    /**
+     * List of plain files to be removed.
+     */
+    std::vector<boost::filesystem::path> files_;
+
+    /**
+     * List of directories to be recursively removed
+     */
+    std::vector<boost::filesystem::path> directories_;
+
+public:
+    void add_shock_object(const std::string &url, const std::string &ws_id) {
+	shock_urls_.emplace_back(ShockObj{url, ws_id});
+    };
+
+    void add_file(const boost::filesystem::path &p) {
+	files_.emplace_back(p);
+    }
+
+    void add_directory(const boost::filesystem::path &p) {
+	directories_.emplace_back(p);
+    }
+
+    friend inline std::ostream &operator<<(std::ostream &os, const RemovalRequest &r) {
+	os << "RemovalRequest\n"
+	   << "Shock:\n";
+	for (auto &x: r.shock_urls_)
+	{
+	    os << "  " << x.shock_url << " " << x.ws_id << "\n";
+	}
+	os << "Files:";
+	for (auto &x: r.files_)
+	    os << " " << x;
+	os << "Dirs:";
+	for (auto &x: r.directories_)
+	    os << " " << x;
+	os << "\n";
+	return os;
+    }
+};
 
 inline std::ostream &operator<<(std::ostream &os, const std::map<std::string, std::string> &m)
 {
@@ -605,9 +784,12 @@ inline std::ostream &operator<<(std::ostream &os, const ObjectMeta &m)
        << "," << m.id
        << "," << m.owner
        << "," << m.shockurl
+       << "," << (m.valid ? "VALID" : "NOT VALID" )
+       << "," << m.error
        << ")";
     return  os;
 }
+
 
 inline bool is_folder(const std::string &type)
 {

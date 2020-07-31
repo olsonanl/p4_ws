@@ -14,7 +14,9 @@ my $ua = LWP::UserAgent->new();
 
 my $url = 'http://holly:12312/api';
 
-test_set_permissions($ua, $url, $token);
+test_delete($ua, $url, $token);
+#test_copy($ua, $url, $token);
+#test_set_permissions($ua, $url, $token);
 #test_update_metadata($ua, $url, $token);
 #test_create($ua, $url, $token);
 #test_get_download_url($ua, $url, $token);
@@ -35,6 +37,76 @@ sub test_get_download_url
     }
 
 }
+
+sub test_copy
+{
+    my($ua, $url, $token) = @_;
+
+    my @p = ($ua, $url, $token);
+    
+    my $from_invalid = '/olso';
+    
+    my $from = '/olson@patricbrc.org/xxx/colicin.calls.txt';
+    my $from_bad = '/olson@patricbrc.org/xxx/colicin.calls.txtxx';
+    my $to = '/olson@patricbrc.org/xxx/colicin.calls.copy.txt';
+    my $xxx = '/olson@patricbrc.org/xxx/yz';
+    my $t1 = '/olson@patricbrc.org/home/workshop';
+
+    my $t2 = '/olson@patricbrc.org/home/test';
+
+    if (0)
+    {
+	do_copy(@p, $from_invalid, $to);
+	
+	do_copy(@p, $from_bad, $to);
+	
+	do_copy(@p, $xxx, $from);
+	do_copy(@p, $from, $from);
+    }
+    do_copy(@p, $t2, $xxx, 0, 1);
+}
+
+sub do_copy
+{
+    my($ua, $url, $token, $from, $to, $overwrite, $recursive) = @_;
+    test_call($ua, $url, $token,
+	      "Workspace.copy",
+	      [{objects => [ [ $from, $to ] ],
+		    overwrite => ($overwrite ? 1 : 0),
+		    recursive => ($recursive ? 1 : 0),
+		    move => 0,
+		    adminmode => 0
+		    }]);
+
+
+}
+
+sub test_delete
+{
+    my($ua, $url, $token) = @_;
+
+    my @p = ($ua, $url, $token);
+    
+    my $from_invalid = '/olso';
+    
+    my $xxx = '/olson@patricbrc.org/xxx/yz/test1/test2';
+    do_delete(@p, $xxx, 1, 1);
+}
+
+sub do_delete
+{
+    my($ua, $url, $token, $path, $deleteDir, $force) = @_;
+    test_call($ua, $url, $token,
+	      "Workspace.delete",
+	      [{objects => [ $path ],
+		    deleteDirectories => ($deleteDir ? 1 : 0),
+		    force => ($force ? 1 : 0),
+		    adminmode => 0
+		    }]);
+
+
+}
+
 
 sub test_update_metadata
 {
@@ -93,8 +165,8 @@ sub test_set_permissions
 	test_call($ua, $url, $token,
 		  "Workspace.set_permissions",
 		  [{ path => $obj,
-			 permissions => [['olson@patricbrc.org', 'r'], ['foobar', 'n']],
-			 new_global_permission => 'p',
+			 permissions => [['olson@patricbrc.org', 'w'], ['foobar', 'n']],
+			 new_global_permission => 'r',
 			 adminmode => 0,
 		      
 		    }]);

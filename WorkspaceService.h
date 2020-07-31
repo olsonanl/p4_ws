@@ -117,6 +117,8 @@ private:
 
     void init_dispatch() {
 	method_map_.emplace(std::make_pair("create",  Method { &WorkspaceService::method_create, Authentication::required }));
+	method_map_.emplace(std::make_pair("delete",  Method { &WorkspaceService::method_delete, Authentication::required }));
+	method_map_.emplace(std::make_pair("copy",  Method { &WorkspaceService::method_copy, Authentication::required }));
 	method_map_.emplace(std::make_pair("ls",  Method { &WorkspaceService::method_ls, Authentication::optional }));
 	method_map_.emplace(std::make_pair("get", Method { &WorkspaceService::method_get, Authentication::optional }));
 	method_map_.emplace(std::make_pair("list_permissions", Method { &WorkspaceService::method_list_permissions, Authentication::optional }));
@@ -124,9 +126,12 @@ private:
 	method_map_.emplace(std::make_pair("get_download_url", Method { &WorkspaceService::method_get_download_url, Authentication::optional }));
 	method_map_.emplace(std::make_pair("update_auto_meta", Method { &WorkspaceService::method_update_auto_meta, Authentication::optional }));
 	method_map_.emplace(std::make_pair("update_metadata", Method { &WorkspaceService::method_update_metadata, Authentication::required }));
+	method_map_.emplace(std::make_pair("update_metadata", Method { &WorkspaceService::method_update_metadata, Authentication::required }));
     }
 
+    void method_copy(const JsonRpcRequest &req, JsonRpcResponse &resp, DispatchContext &dc, int &http_code);
     void method_create(const JsonRpcRequest &req, JsonRpcResponse &resp, DispatchContext &dc, int &http_code);
+    void method_delete(const JsonRpcRequest &req, JsonRpcResponse &resp, DispatchContext &dc, int &http_code);
     void method_get(const JsonRpcRequest &req, JsonRpcResponse &resp, DispatchContext &dc, int &http_code);
     void method_ls(const JsonRpcRequest &req, JsonRpcResponse &resp, DispatchContext &dc, int &http_code);
     void method_list_permissions(const JsonRpcRequest &req, JsonRpcResponse &resp, DispatchContext &dc, int &http_code);
@@ -138,7 +143,7 @@ private:
     void process_create(WorkspaceDBQuery & qobj, DispatchContext &dc,
 			ObjectToCreate &to_create, boost::json::value &ret_value,
 			const std::string &permission, bool createUploadNodes, bool downloadFromLinks, bool overwrite,
-			const std::string &setowner);
+			const std::string &setowner, RemovalRequest &remreq);
     void process_ls(std::unique_ptr<WorkspaceDBQuery> qobj,
 		    DispatchContext &dc, boost::json::array &paths, boost::json::object &output,
 		    bool excludeDirectories, bool excludeObjects, bool recursive, bool fullHierachicalOutput);

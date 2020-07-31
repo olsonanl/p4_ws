@@ -16,7 +16,7 @@ namespace net = boost::asio;            // from <boost/asio.hpp>
 using tcp = boost::asio::ip::tcp;       // from <boost/asio/ip/tcp.hpp>
 namespace json = boost::json;
 namespace ssl = boost::asio::ssl;       // from <boost/asio/ssl.hpp>
-
+namespace fs = boost::filesystem;
 
 bool value_as_bool(const json::value &v)
 {
@@ -76,6 +76,14 @@ std::string object_at_as_string(const json::object &obj, const json::string &key
     {
 	return default_value;
     }
+}
+
+/**
+ * Push an ObjectMeta with just an error field to the given output array.
+ */
+static void push_error_meta(json::array &output, const std::string &err)
+{
+    output.emplace_back(ObjectMeta(ObjectMeta::errorMeta, err).serialize());
 }
 
 WorkspaceService::WorkspaceService(boost::asio::io_context &ioc, boost::asio::ssl::context &ssl_ctx,
@@ -351,12 +359,15 @@ void WorkspaceService::method_create(const JsonRpcRequest &req, JsonRpcResponse 
      * Objects have been parsed int ObjectToCreate list.
      * Pass to process_create in the database thread.
      */
+
     
+    RemovalRequest remreq;
+
     json::array output;
     db_.run_in_sync_thread(dc,
 			   [this, &dc, &permission,
 			    createUploadNodes, downloadFromLinks, &owner, overwrite,
-			    &to_create, &output]
+			    &remreq, &to_create, &output]
 			   (std::unique_ptr<WorkspaceDBQuery> qobj_ptr) 
 			       {
 				   WorkspaceDBQuery &qobj = *qobj_ptr;
@@ -364,11 +375,12 @@ void WorkspaceService::method_create(const JsonRpcRequest &req, JsonRpcResponse 
 				   {
 				       json::value val;
 				       process_create(qobj, dc, tc, val,
-						      permission, createUploadNodes, downloadFromLinks, overwrite,owner);
+						      permission, createUploadNodes, downloadFromLinks, overwrite, owner, remreq);
 				       output.emplace_back(val);
 				   }
 			       });
 
+    std::cerr << "To remove after create: " << remreq;
     resp.result().emplace_back(output);
     BOOST_LOG_SEV(dc.lg_, wslog::debug) << output << "\n";
 }
@@ -384,7 +396,7 @@ void WorkspaceService::method_create(const JsonRpcRequest &req, JsonRpcResponse 
 void WorkspaceService::process_create(WorkspaceDBQuery & qobj, DispatchContext &dc,
 				      ObjectToCreate &to_create, boost::json::value &ret_value,
 				      const std::string &permission, bool createUploadNodes, bool downloadFromLinks,
-				      bool overwrite, const std::string &owner)
+				      bool overwrite, const std::string &owner, RemovalRequest &remreq)
 {
     std::cerr << "Create: " << to_create << "\n";
     to_create.parsed_path = qobj.parse_path(to_create.path);
@@ -520,6 +532,7 @@ void WorkspaceService::process_create(WorkspaceDBQuery & qobj, DispatchContext &
 	 * already exist.
 	 */
 
+	std::cerr << "check for intermediates: " << to_create << "\n";
 	
 	std::vector<std::string> path_comps = to_create.path_components();
 	WSPath qpath(to_create.parsed_path);
@@ -543,6 +556,7 @@ void WorkspaceService::process_create(WorkspaceDBQuery & qobj, DispatchContext &
 		    return;
 		}
 	    }
+	    else
 	    {
 		ObjectToCreate ptc(qpath, "folder");
 		boost::uuids::uuid uuidobj = (*(db_.uuidgen()))();
@@ -564,8 +578,6 @@ void WorkspaceService::process_create(WorkspaceDBQuery & qobj, DispatchContext &
      *
      */
 
-    
-    
     if (createUploadNodes)
     {
 	/*
@@ -615,7 +627,7 @@ void WorkspaceService::process_create(WorkspaceDBQuery & qobj, DispatchContext &
      */
     if (overwrite)
     {
-	qobj.remove_workspace_object(to_create.parsed_path, meta.id);
+	qobj.remove_workspace_object(meta, remreq);
     }
      
 
@@ -1260,4 +1272,196 @@ void WorkspaceService::method_set_permissions(const JsonRpcRequest &req, JsonRpc
     resp.result().emplace_back(output);
     BOOST_LOG_SEV(dc.lg_, wslog::debug) << output << "\n";
 
+}
+
+
+void WorkspaceService::method_copy(const JsonRpcRequest &req, JsonRpcResponse &resp, DispatchContext &dc, int &http_code)
+{
+    bool overwrite;
+    bool recursive;
+    bool move;
+    std::vector<std::pair<std::string, std::string>> objects;
+
+    auto &cfg = shared_state_.config();
+
+    try {
+	auto input = req.params().at(0).as_object();
+	auto objs = input.at("objects").as_array();
+	for (auto obj: objs)
+	{
+	    auto lobj = obj.as_array();
+	    objects.emplace_back(lobj.at(0).as_string().c_str(), lobj.at(1).as_string().c_str());
+	}
+
+	overwrite = object_at_as_bool(input, "overwrite");
+	recursive = object_at_as_bool(input, "recursive");
+	move = object_at_as_bool(input, "move");
+	
+	if (object_at_as_bool(input, "adminmode"))
+	    dc.admin_mode = shared_state_.config().user_is_admin(dc.token.user());
+
+    } catch (std::invalid_argument e) {
+	BOOST_LOG_SEV(dc.lg_, wslog::debug) << "error parsing: " << e.what() << "\n";
+	resp.set_error(-32602, "Invalid request parameters");
+	http_code = 500;
+	return;
+    } catch (std::exception e) {
+	BOOST_LOG_SEV(dc.lg_, wslog::debug) << "error parsing: " << e.what() << "\n";
+	resp.set_error(-32602, "Invalid request parameters");
+	http_code = 500;
+	return;
+    }
+
+    BOOST_LOG_SEV(dc.lg_, wslog::debug) << "method_copy  adminmode=" << dc.admin_mode << "\n";
+
+    json::array output;
+
+
+    if (move)
+    {
+	db_.run_in_sync_thread(dc, [&objects, &overwrite, &output, this]
+			       (std::unique_ptr<WorkspaceDBQuery> qobj) 
+	    {
+		for (auto &obj: objects)
+		{
+		    std::string &from = obj.first;
+		    std::string &to = obj.second;
+
+		    ObjectMeta meta = qobj->perform_move(from, to, overwrite);
+		    output.emplace_back(meta.serialize());
+		    
+		}
+	    });
+    }
+    else
+    {
+	db_.run_in_sync_thread(dc, [&objects, &overwrite, &recursive, &output, this]
+			       (std::unique_ptr<WorkspaceDBQuery> qobj) 
+	    {
+		for (auto &obj: objects)
+		{
+		    std::string &from = obj.first;
+		    std::string &to = obj.second;
+
+		    ObjectMeta meta = qobj->perform_copy(from, to, recursive, overwrite);
+		    std::cerr << from << " " << to << " got " << meta << "\n";
+		    output.emplace_back(meta.serialize());
+		    std::cerr << "output now " << output << "\n";
+		}
+	    });
+    }
+
+
+    resp.result().emplace_back(output);
+    BOOST_LOG_SEV(dc.lg_, wslog::debug) << output << "\n";
+}
+
+void WorkspaceService::method_delete(const JsonRpcRequest &req, JsonRpcResponse &resp,
+				     DispatchContext &dc, int &http_code)
+{
+    json::array objects;
+    auto &cfg = shared_state_.config();
+    bool delete_directories, force;
+    try {
+	auto input = req.params().at(0).as_object();
+	objects = input.at("objects").as_array();
+	delete_directories = object_at_as_bool(input, "deleteDirectories");
+	force = object_at_as_bool(input, "force");
+	
+	if (object_at_as_bool(input, "adminmode"))
+	    dc.admin_mode = cfg.user_is_admin(dc.token.user());
+    } catch (std::invalid_argument e) {
+	BOOST_LOG_SEV(dc.lg_, wslog::debug) << "error parsing: " << e.what() << "\n";
+	resp.set_error(-32602, "Invalid request parameters");
+	http_code = 500;
+	return;
+    } catch (std::exception e) {
+	BOOST_LOG_SEV(dc.lg_, wslog::debug) << "error parsing: " << e.what() << "\n";
+	resp.set_error(-32602, "Invalid request parameters");
+	http_code = 500;
+	return;
+    }
+
+    std::vector<fs::path> paths_to_remove;
+    std::vector<ObjectMeta> shock_nodes_to_remove;
+    
+    json::array output;
+
+    RemovalRequest remreq;
+
+    db_.run_in_thread(dc,
+		      [this, delete_directories, force, &objects, &paths_to_remove, &shock_nodes_to_remove, &output, &remreq]
+		      (std::unique_ptr<WorkspaceDBQuery> qobj_ptr) 
+			  {
+			      WorkspaceDBQuery &qobj = *qobj_ptr;
+			      for (auto obj: objects)
+			      {
+				  WSPath path = qobj.parse_path(obj);
+				  
+				  if (!qobj.user_has_permission(path.workspace, WSPermission::write))
+				  {
+				      BOOST_LOG_SEV(lg_, wslog::debug) << "no permission to remove " << path;
+				      push_error_meta(output, "Permission denied to remove object");
+				      continue;
+				  }
+				  
+				  ObjectMeta meta = qobj.lookup_object_meta(path);
+				  
+				  if (!meta.valid)
+				  {
+				      push_error_meta(output, "Object does not exist");
+				      continue;
+				  }
+
+				  /*
+				   * Validate. If the object is a folder, the action taken
+				   * depends on the values of delete_directories and force.
+				   * delete_directories=true, force=true: recursive delete
+				   * delete_directories=true, force=false: remove folder only if it is empty
+				   * delete_directories=false: error
+				   *
+				   * If the object is not a folder, just remove.
+				   */
+
+				  bool removed;
+				  if (meta.is_folder())
+				  {
+				      if (!delete_directories)
+				      {
+					  push_error_meta(output, "Trying to delete folder but deleteDirectories not set");
+					  continue;
+				      }
+				      if (force)
+				      {
+					  removed = qobj.remove_workspace_folder_and_contents(meta, remreq);
+				      }
+				      else
+				      {
+					  removed = qobj.remove_workspace_folder_only(meta, remreq);
+				      }
+				  }
+				  else
+				  {
+				      std::cerr << "not removing " << meta << "\n";
+//				      removed = qobj.remove_workspace_object(meta, remreq);
+				  }
+
+				  if (removed)
+				  {
+				      std::cerr << "Deleted " << meta << "\n";
+				  }
+				  else
+				  {
+				      std::cerr << "Did not delete " << meta << "\n";
+				  }
+				  
+				  
+				  output.emplace_back(meta.serialize());
+			      }
+			  });
+
+    std::cerr << "To remove after delete: " << remreq;
+
+    resp.result().emplace_back(output);
+    BOOST_LOG_SEV(dc.lg_, wslog::debug) << output << "\n";
 }

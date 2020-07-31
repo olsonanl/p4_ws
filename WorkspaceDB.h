@@ -34,6 +34,10 @@ private:
     mongocxx::pool::entry  client_;
     WorkspaceDB &db_;
 
+    mongocxx::collection object_collection();
+    mongocxx::collection workspace_collection();
+    mongocxx::collection download_collection();
+
 public:
     WorkspaceDBQuery(const AuthToken &token, bool admin_mode, mongocxx::pool::entry p, WorkspaceDB &db)
 	: token_(token)
@@ -93,7 +97,11 @@ public:
      */
     ObjectMeta create_workspace_object(const ObjectToCreate &tc, const std::string &owner);
 
-    bool remove_workspace_object(const WSPath &path, const std::string &obj_id);
+    ObjectMeta copy_workspace_object(const ObjectMeta &from, const WSPath &to);
+
+    bool remove_workspace_object(const ObjectMeta &meta, RemovalRequest &remreq);
+    bool remove_workspace_folder_only(const ObjectMeta &meta, RemovalRequest &remreq);
+    bool remove_workspace_folder_and_contents(const ObjectMeta &meta, RemovalRequest &remreq);
 
     /**
      * Update workspace or object metadata.
@@ -107,6 +115,26 @@ public:
 								 const std::vector<UserPermission> &user_permissions,
 								 const std::experimental::optional<WSPermission> &new_global_permission,
 								 boost::json::array &output);
+
+    /**
+     * Perform a copy operation.
+     */
+    ObjectMeta perform_copy(const std::string &from, const std::string &to, bool recursive, bool overwrite);
+
+    /**
+     * Perform a move operation.
+     */
+    ObjectMeta perform_move(const std::string &from, const std::string &to, bool overwrite);
+
+    /**
+     * Generate a new UUID.
+     */
+    std::string generate_uuid();    
+
+    /**
+     * Create a new folder owned by the current user.
+     */
+    ObjectMeta create_folder(const WSPath &path);
 };
 
 class WorkspaceState;
