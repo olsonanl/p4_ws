@@ -436,8 +436,9 @@ namespace ws_http_server {
 		
 		
 		    // Create the session and run it
-
-		    boost::asio::spawn(acceptor_.get_executor(),
+		    // It should spawn into the socket's strand, not the acceptor's.
+		    
+		    boost::asio::spawn(socket_.get_executor(),
 				       [session = std::make_shared<Session>(std::move(socket_), server_)]
 				       (net::yield_context yield) {
 					   session->run(yield);
